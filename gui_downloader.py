@@ -268,7 +268,7 @@ class YoutubeDownloaderApp(ttk.Window):
 
         # Icône de l'application
         try:
-            icon_img = tk.PhotoImage(file="icon.png")
+            icon_img = tk.PhotoImage(file="/Users/pierredv/Coding/yt-downloader/icon.png")
             self.iconphoto(False, icon_img)
         except:
             pass
