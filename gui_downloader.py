@@ -8,6 +8,7 @@ import platform
 import io
 import json
 import time
+import datetime
 import requests
 from PIL import Image, ImageTk
 import tkinter as tk
@@ -263,7 +264,7 @@ class YoutubeDownloaderApp(ttk.Window):
         self.title("ViDL - Téléchargeur YouTube")
         sys.argv[0] = "ViDL"
 
-        # Centrer la fenêtre (800 x 650) pour un cadre légèrement agrandi
+        # Augmenter légèrement la taille de la fenêtre
         self.center_window(800, 650)
 
         # Icône de l'application
@@ -286,9 +287,7 @@ class YoutubeDownloaderApp(ttk.Window):
         self.style.configure("Card.TFrame", background=self.style.colors.get("light"), padding=10, relief="flat")
         self.style.configure("Card.TLabel", background=self.style.colors.get("light"))
         self.progress_style_name = "download.Horizontal.TProgressbar"
-        # Agrandir la barre de progrès et tenter d'arrondir ses bords (si ttkbootstrap le permet)
         self.style.configure(self.progress_style_name, thickness=20, borderwidth=0, relief="flat")
-        # Nouveau style pour la barre d'analyse
         self.style.configure("Analyze.Horizontal.TProgressbar",
                              thickness=10,
                              troughcolor=self.style.colors.get("dark"),
@@ -321,6 +320,16 @@ class YoutubeDownloaderApp(ttk.Window):
         # Placeholder pour la barre de recherche
         self.url_placeholder = "Entrez l'URL de la vidéo YouTube…"
         self.url_var.set(self.url_placeholder)
+
+        # Pour stocker les infos de la vidéo courante (définies lors de l'analyse)
+        self.current_video_info = {}
+
+        # Gestion de l'historique
+        self.history = []       # Liste d'entrées de téléchargement
+        self.history_images = {}  # Dictionnaire pour conserver les PhotoImage des thumbnails
+        # Utiliser history.json dans le dossier de l'application
+        self.history_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "history.json")
+        self.load_history()
 
         self.build_menu()
         self.build_ui()
@@ -364,13 +373,27 @@ class YoutubeDownloaderApp(ttk.Window):
         container = ttk.Frame(self, padding=15)
         container.pack(fill=tk.BOTH, expand=True)
 
-        # Titre de l'application
-        title_label = ttk.Label(container, text="ViDL - Téléchargeur YouTube",
+        # Création d'un Notebook pour séparer les onglets
+        self.notebook = ttk.Notebook(container)
+        self.notebook.pack(fill=tk.BOTH, expand=True)
+
+        self.tab_download = ttk.Frame(self.notebook)
+        self.tab_history = ttk.Frame(self.notebook)
+
+        self.notebook.add(self.tab_download, text="Téléchargement")
+        self.notebook.add(self.tab_history, text="Historique")
+
+        self.build_download_tab()
+        self.build_history_tab()
+
+    def build_download_tab(self):
+        # --- Titre de l'onglet Téléchargement
+        title_label = ttk.Label(self.tab_download, text="ViDL - Téléchargeur YouTube",
                                 font=("Helvetica", 24, "bold"))
         title_label.pack(pady=(0, 10))
 
         # --- Section Analyse de la vidéo
-        frm_analyze = ttk.Labelframe(container, text="Analyse de la vidéo", padding=15)
+        frm_analyze = ttk.Labelframe(self.tab_download, text="Analyse de la vidéo", padding=15)
         frm_analyze.pack(fill=tk.X, pady=10)
 
         # Ligne 1 : Barre de recherche
@@ -385,7 +408,7 @@ class YoutubeDownloaderApp(ttk.Window):
         self.ent_url.bind("<FocusIn>", self.clear_url_placeholder)
         self.ent_url.bind("<FocusOut>", self.add_url_placeholder)
 
-        # Bouton avec uniquement l'icône pour coller l'URL
+        # Bouton pour coller l'URL
         btn_paste = ttk.Button(frm_search, text="📋",
                                bootstyle="secondary",
                                command=self.paste_url)
@@ -403,7 +426,6 @@ class YoutubeDownloaderApp(ttk.Window):
         frm_status.pack(fill=tk.X, padx=5, pady=(0,5))
         self.lbl_analyze_info = ttk.Label(frm_status, text="", foreground="#aaa")
         self.lbl_analyze_info.pack(side=tk.LEFT, padx=5, pady=5)
-        # Barre de progression d'analyse (style personnalisé)
         self.analyze_progress = ttk.Progressbar(frm_status, 
                                                 style="Analyze.Horizontal.TProgressbar",
                                                 orient=tk.HORIZONTAL,
@@ -411,18 +433,16 @@ class YoutubeDownloaderApp(ttk.Window):
         self.analyze_progress.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, pady=5)
         self.analyze_progress.pack_forget()  # Cachée par défaut
 
-        # Ligne 3 : Affichage de la miniature et infos dans une "card"
+        # Ligne 3 : Miniature et infos de la vidéo
         frm_thumbinfo = ttk.Frame(frm_analyze)
         frm_thumbinfo.pack(fill=tk.X, pady=10)
 
         card_frame = ttk.Frame(frm_thumbinfo, style="Card.TFrame")
         card_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        # Colonne 1 : Miniature (étendue sur 6 lignes pour inclure les commentaires)
         self.lbl_thumbnail = ttk.Label(card_frame, image=self.placeholder_tk)
         self.lbl_thumbnail.grid(row=0, column=0, rowspan=6, padx=10, pady=5)
 
-        # Colonne 2 : Informations de la vidéo
         self.lbl_video_title = ttk.Label(card_frame, text="Titre :", style="Card.TLabel", font=("Helvetica", 16, "bold"))
         self.lbl_video_title.grid(row=0, column=1, sticky="w", padx=5, pady=(5,2))
 
@@ -438,12 +458,11 @@ class YoutubeDownloaderApp(ttk.Window):
         self.lbl_video_likes = ttk.Label(card_frame, text="Likes :", style="Card.TLabel", font=("Helvetica", 12))
         self.lbl_video_likes.grid(row=4, column=1, sticky="w", padx=5, pady=2)
         
-        # Nouveau champ pour les commentaires
         self.lbl_video_comments = ttk.Label(card_frame, text="Commentaires :", style="Card.TLabel", font=("Helvetica", 12))
         self.lbl_video_comments.grid(row=5, column=1, sticky="w", padx=5, pady=2)
 
         # --- Section Téléchargement
-        frm_download = ttk.Labelframe(container, text="Téléchargement", padding=15)
+        frm_download = ttk.Labelframe(self.tab_download, text="Téléchargement", padding=15)
         frm_download.pack(fill=tk.X, pady=10)
 
         for col_index in range(4):
@@ -472,8 +491,6 @@ class YoutubeDownloaderApp(ttk.Window):
         btn_choose_dir.grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
         CreateToolTip(btn_choose_dir, "Sélectionnez le dossier de téléchargement")
 
-        # Création d'un conteneur pour les boutons Annuler et Télécharger, côte à côte,
-        # avec le bouton Annuler placé à gauche de Télécharger.
         btn_frame = ttk.Frame(frm_download)
         btn_frame.grid(row=1, column=2, columnspan=2, sticky=tk.E, padx=5, pady=5)
         self.btn_cancel = ttk.Button(btn_frame, text="✖️ Annuler", bootstyle="danger-outline",
@@ -503,6 +520,24 @@ class YoutubeDownloaderApp(ttk.Window):
         self.lbl_status = ttk.Label(frm_download, textvariable=self.status_var,
                                     foreground="#aaa")
         self.lbl_status.grid(row=4, column=0, columnspan=4, sticky=tk.W, pady=5)
+
+    def build_history_tab(self):
+        # Partie Recherche
+        search_frame = ttk.Frame(self.tab_history)
+        search_frame.pack(fill=tk.X, padx=5, pady=5)
+        lbl_search = ttk.Label(search_frame, text="Recherche :")
+        lbl_search.pack(side=tk.LEFT, padx=5)
+        self.search_var = ttk.StringVar()
+        self.ent_search = ttk.Entry(search_frame, textvariable=self.search_var)
+        self.ent_search.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        self.ent_search.bind("<KeyRelease>", self.update_history_view)
+
+        # Conteneur pour afficher chaque téléchargement dans l'historique
+        self.history_frame = ttk.Frame(self.tab_history)
+        self.history_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Remplissage initial de l'historique
+        self.update_history_view()
 
     # ---------------------------------------------------------
     # Gestion du placeholder dans la barre de recherche
@@ -536,7 +571,7 @@ class YoutubeDownloaderApp(ttk.Window):
                                 f"Les vidéos seront enregistrées dans :\n{self.output_dir}")
 
     # ---------------------------------------------------------
-    # Analyse de la vidéo (texte fixe "Analyse en cours…")
+    # Analyse de la vidéo
     # ---------------------------------------------------------
     def analyze_video(self):
         url = self.url_var.get().strip()
@@ -548,7 +583,6 @@ class YoutubeDownloaderApp(ttk.Window):
         self.audio_format_list.clear()
         self.combo_format['values'] = []
         self.selected_format.set('')
-        # Afficher le texte fixe "Analyse en cours…"
         self.lbl_analyze_info.config(text="Analyse en cours…")
 
         # Réinitialiser la miniature et les infos
@@ -560,7 +594,6 @@ class YoutubeDownloaderApp(ttk.Window):
         self.lbl_video_likes.config(text="Likes :")
         self.lbl_video_comments.config(text="Commentaires :")
 
-        # Afficher la barre de progression d'analyse et la démarrer
         self.analyze_progress.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, pady=5)
         self.analyze_progress.start(10)
 
@@ -620,6 +653,13 @@ class YoutubeDownloaderApp(ttk.Window):
                 self.lbl_video_likes.config(text=f"Likes : {like_count:,}")
             if comment_count is not None:
                 self.lbl_video_comments.config(text=f"Commentaires : {comment_count:,}")
+
+            # Sauvegarde des infos de la vidéo analysée pour l'historique
+            self.current_video_info = {
+                "title": video_title,
+                "url": url,
+                "thumbnail_url": thumb_url
+            }
 
         self.after(0, on_finish)
 
@@ -690,10 +730,7 @@ class YoutubeDownloaderApp(ttk.Window):
         self.status_var.set("Téléchargement en cours... 0.0%")
         self.skip_first_progress_value = True
 
-        # Réinitialiser l'indicateur d'annulation
         self.cancelled = False
-
-        # Activer le bouton Annuler
         self.btn_cancel.config(state="normal")
         threading.Thread(target=self.run_download_thread, args=(cmd,), daemon=True).start()
 
@@ -759,7 +796,7 @@ class YoutubeDownloaderApp(ttk.Window):
             self.btn_cancel.config(state="disabled")
 
     # ---------------------------------------------------------
-    # Animation de la barre de progression pour le téléchargement
+    # Animation de la barre de progression
     # ---------------------------------------------------------
     def set_smooth_target(self, new_target):
         cur = self.progress_val.get()
@@ -793,7 +830,6 @@ class YoutubeDownloaderApp(ttk.Window):
             self.progress_val.set(100)
             file_size_msg = ""
             if self.downloaded_file_path:
-                # Attendre que le fichier soit effectivement présent
                 timeout = 3.0
                 start_time = time.time()
                 while not os.path.exists(self.downloaded_file_path) and time.time() - start_time < timeout:
@@ -806,6 +842,11 @@ class YoutubeDownloaderApp(ttk.Window):
                     except Exception as e:
                         print("Erreur lors de l'obtention de la taille du fichier:", e)
             self.status_var.set(f"Téléchargement terminé{file_size_msg}.")
+            # Ajout à l'historique
+            if self.current_video_info and self.current_video_info.get("title"):
+                entry = self.current_video_info.copy()
+                entry["download_date"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+                self.add_to_history(entry)
             if self.open_folder_var.get():
                 self.open_downloads_folder()
         else:
@@ -813,7 +854,7 @@ class YoutubeDownloaderApp(ttk.Window):
             self.progress_val.set(0)
             if self.cancelled:
                 self.status_var.set("Le téléchargement a été arrêté.")
-                self.cancelled = False  # Réinitialiser pour la prochaine opération
+                self.cancelled = False
             else:
                 self.status_var.set("Échec du téléchargement.")
                 messagebox.showerror("Erreur", "Erreur lors du téléchargement.")
@@ -827,6 +868,94 @@ class YoutubeDownloaderApp(ttk.Window):
         else:
             subprocess.run(["xdg-open", self.output_dir])
 
+    # ---------------------------------------------------------
+    # Gestion de l'historique
+    # ---------------------------------------------------------
+    def load_history(self):
+        if os.path.exists(self.history_file):
+            try:
+                with open(self.history_file, "r", encoding="utf-8") as f:
+                    self.history = json.load(f)
+            except Exception as e:
+                print("Erreur lors du chargement de l'historique :", e)
+                self.history = []
+        else:
+            self.history = []
+
+    def save_history(self):
+        try:
+            with open(self.history_file, "w", encoding="utf-8") as f:
+                json.dump(self.history, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print("Erreur lors de la sauvegarde de l'historique :", e)
+
+    def add_to_history(self, entry):
+        self.history.append(entry)
+        self.save_history()
+        self.update_history_view()
+
+    def update_history_view(self, event=None):
+        # Effacer l'affichage actuel
+        for widget in self.history_frame.winfo_children():
+            widget.destroy()
+
+        # Récupérer le filtre de recherche
+        query = self.search_var.get().lower() if hasattr(self, "search_var") else ""
+        for entry in self.history:
+            title = entry.get("title", "")
+            url = entry.get("url", "")
+            date = entry.get("download_date", "")
+
+            # Filtrer par titre ou URL si nécessaire
+            if query and (query not in title.lower() and query not in url.lower()):
+                continue
+
+            # Création d'un mini-container pour chaque téléchargement
+            item_frame = ttk.Frame(self.history_frame)
+            item_frame.pack(fill=tk.X, padx=10, pady=(5, 0))
+
+            # Récupérer ou télécharger le thumbnail
+            thumb_url = entry.get("thumbnail_url")
+            if thumb_url in self.history_images:
+                photo = self.history_images[thumb_url]
+            else:
+                try:
+                    r = requests.get(thumb_url, timeout=5)
+                    r.raise_for_status()
+                    img_data = r.content
+                    pil_img = Image.open(io.BytesIO(img_data))
+                    pil_img = pil_img.resize((80, 45), Image.Resampling.LANCZOS)
+                    photo = ImageTk.PhotoImage(pil_img)
+                except:
+                    photo = self.placeholder_tk
+                self.history_images[thumb_url] = photo
+
+            lbl_thumbnail = ttk.Label(item_frame, image=photo)
+            lbl_thumbnail.pack(side=tk.LEFT, padx=(0, 10))
+
+            # Conteneur pour les infos textuelles
+            text_frame = ttk.Frame(item_frame)
+            text_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+            lbl_title = ttk.Label(text_frame, text=f"{title}", font=("Helvetica", 12, "bold"))
+            lbl_title.pack(anchor=tk.W)
+            lbl_url = ttk.Label(text_frame, text=f"{url}", font=("Helvetica", 10), foreground="#555")
+            lbl_url.pack(anchor=tk.W)
+            lbl_date = ttk.Label(text_frame, text=f"{date}", font=("Helvetica", 10), foreground="#888")
+            lbl_date.pack(anchor=tk.W)
+
+            # Lier un double-clic sur l'item pour réutiliser l'URL
+            item_frame.bind("<Double-1>", lambda event, url=url: self.on_history_item_double_click(url))
+            for child in item_frame.winfo_children():
+                child.bind("<Double-1>", lambda event, url=url: self.on_history_item_double_click(url))
+
+            # Ligne séparatrice (une seule ligne fine, style macOS)
+            sep = ttk.Separator(self.history_frame, orient="horizontal")
+            sep.pack(fill=tk.X, padx=10, pady=5)
+
+    def on_history_item_double_click(self, url):
+        self.url_var.set(url)
+        self.notebook.select(self.tab_download)
 
 if __name__ == "__main__":
     app = YoutubeDownloaderApp()
