@@ -265,7 +265,7 @@ class YoutubeDownloaderApp(ttk.Window):
         sys.argv[0] = "ViDL"
 
         # Augmenter légèrement la taille de la fenêtre
-        self.center_window(800, 650)
+        self.center_window(800, 705)
 
         # Icône de l'application
         try:
@@ -373,8 +373,8 @@ class YoutubeDownloaderApp(ttk.Window):
         container = ttk.Frame(self, padding=15)
         container.pack(fill=tk.BOTH, expand=True)
 
-        # Création d'un Notebook pour séparer les onglets
-        self.notebook = ttk.Notebook(container)
+        # Ajout d'un padding sur le Notebook pour éviter les chevauchements (surtout sur macOS)
+        self.notebook = ttk.Notebook(container, padding=10)
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
         self.tab_download = ttk.Frame(self.notebook)
@@ -387,14 +387,17 @@ class YoutubeDownloaderApp(ttk.Window):
         self.build_history_tab()
 
     def build_download_tab(self):
+        # Utilisation de grid pour organiser les widgets principaux de l'onglet Téléchargement
+        self.tab_download.columnconfigure(0, weight=1)
+
         # --- Titre de l'onglet Téléchargement
         title_label = ttk.Label(self.tab_download, text="ViDL - Téléchargeur YouTube",
-                                font=("Helvetica", 24, "bold"))
-        title_label.pack(pady=(0, 10))
+                                font=("Helvetica", 24, "bold"), anchor="center", justify="center")
+        title_label.grid(row=0, column=0, pady=(10, 10), sticky="ew")
 
         # --- Section Analyse de la vidéo
         frm_analyze = ttk.Labelframe(self.tab_download, text="Analyse de la vidéo", padding=15)
-        frm_analyze.pack(fill=tk.X, pady=10)
+        frm_analyze.grid(row=1, column=0, padx=10, pady=10, sticky="ew")
 
         # Ligne 1 : Barre de recherche
         frm_search = ttk.Frame(frm_analyze)
@@ -460,10 +463,12 @@ class YoutubeDownloaderApp(ttk.Window):
         
         self.lbl_video_comments = ttk.Label(card_frame, text="Commentaires :", style="Card.TLabel", font=("Helvetica", 12))
         self.lbl_video_comments.grid(row=5, column=1, sticky="w", padx=5, pady=2)
+        # Pour que la colonne 1 prenne tout l'espace disponible
+        card_frame.grid_columnconfigure(1, weight=1)
 
         # --- Section Téléchargement
         frm_download = ttk.Labelframe(self.tab_download, text="Téléchargement", padding=15)
-        frm_download.pack(fill=tk.X, pady=10)
+        frm_download.grid(row=2, column=0, padx=10, pady=10, sticky="ew")
 
         for col_index in range(4):
             frm_download.columnconfigure(col_index, weight=1)
