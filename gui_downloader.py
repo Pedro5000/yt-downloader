@@ -78,7 +78,7 @@ class CreateToolTip(object):
 # ---------------------------------------------------------
 def parse_available_formats(video_url):
     """
-    Analyse les formats disponibles (≥360p) et renvoie :
+    Analyse les formats disponibles et renvoie :
       - video_format_list : [(id, desc), ...]
       - audio_format_list : [(id, desc), ...]
     Utilise yt-dlp -F pour lister, puis filtre.
@@ -97,11 +97,9 @@ def parse_available_formats(video_url):
 
     best_audio_any = (None, None, -1)
     best_audio_mp4 = (None, None, -1)
-
     mux_dict = {}
     video_only_dict = {}
     audio_only_list = []
-
     skip_keywords = ["storyboard", "mhtml"]
 
     for line in lines:
@@ -122,7 +120,6 @@ def parse_available_formats(video_url):
         if len(tokens) < 2:
             continue
         ext = tokens[0]
-
         tbr_matches = tbr_regex.findall(rest)
         tbr_kbps = max(int(x) for x in tbr_matches) if tbr_matches else 0
 
@@ -137,9 +134,6 @@ def parse_available_formats(video_url):
             if not mres:
                 continue
             w, h = map(int, mres.groups())
-            if min(w, h) < 360:
-                continue
-
             fps_match = fps_regex.search(line)
             if fps_match:
                 try:
@@ -150,14 +144,9 @@ def parse_available_formats(video_url):
                 if " 60 " in rest or "60fps" in lower_rest:
                     fps_val = 60
                 else:
-                    fps_val = 30  # par défaut
-
-            if fps_val not in (30, 60):
-                continue
-
+                    fps_val = 30
             if ext != "mp4":
                 continue
-
             if "video only" in lower_rest:
                 current = video_only_dict.get((w, h, fps_val), (None, None, -1))
                 if tbr_kbps > current[2]:
@@ -172,19 +161,15 @@ def parse_available_formats(video_url):
     else:
         best_audio = best_audio_any
     best_audio_id, best_audio_desc, best_audio_abr = best_audio
-
     all_keys = set(video_only_dict.keys()) | set(mux_dict.keys())
     video_format_list = []
-
     def sort_key(k):
         w, h, f = k
         return (min(w, h), f)
-
     for whf in sorted(all_keys, key=sort_key):
         w, h, fps_val = whf
         mux_fid, mux_desc, mux_tbr = mux_dict.get(whf, (None, None, 0))
         vid_fid, vid_desc, vid_tbr = video_only_dict.get(whf, (None, None, 0))
-
         combo_tbr = 0
         combo_id = None
         combo_desc = None
@@ -192,7 +177,6 @@ def parse_available_formats(video_url):
             combo_tbr = vid_tbr + best_audio_abr
             combo_id = f"{vid_fid}+{best_audio_id}"
             combo_desc = f"{combo_id} | {w}x{h}@{fps_val}fps VIDEO: {vid_desc} + AUDIO: {best_audio_desc}"
-
         if combo_tbr > mux_tbr:
             if combo_id:
                 video_format_list.append((combo_id, combo_desc))
@@ -200,24 +184,17 @@ def parse_available_formats(video_url):
             if mux_fid:
                 display = f"{mux_fid} | {w}x{h}@{fps_val}fps {mux_desc}"
                 video_format_list.append((mux_fid, display))
-
     final_video_list = [(x[0], x[1]) for x in video_format_list]
-
     audio_list_filtered = []
     for (fid, desc, abr) in audio_only_list:
         if ("mp4" in desc.lower()) or ("m4a" in desc.lower()):
             audio_list_filtered.append((fid, f"{fid} | {desc}"))
-
     if not audio_list_filtered and best_audio_any[0]:
         fid, bd, _ = best_audio_any
         audio_list_filtered = [(fid, f"{fid} | {bd}")]
-
     return final_video_list, audio_list_filtered
 
 def get_thumbnail_url(video_url):
-    """
-    Récupère l'URL du thumbnail via : yt-dlp --get-thumbnail <URL>
-    """
     try:
         cmd = ["yt-dlp", "--get-thumbnail", video_url]
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -227,11 +204,6 @@ def get_thumbnail_url(video_url):
         return None
 
 def get_video_info(video_url):
-    """
-    Récupère les informations de la vidéo via yt-dlp en mode JSON.
-    Renvoie un tuple (title, uploader, upload_date, view_count, like_count, comment_count)
-    ou (None, None, None, None, None, None) en cas d'erreur.
-    """
     try:
         cmd = ["yt-dlp", "-j", video_url]
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -249,41 +221,43 @@ def get_video_info(video_url):
         print("Erreur lors de la récupération des infos :", e)
         return None, None, None, None, None, None
 
-# ---------------------------------------------------------
-# Classe principale de l'application
-# ---------------------------------------------------------
+def reencode_mp4_file(file_path):
+    """
+    Ré-encode le fichier MP4 en H264 avec l'option faststart,
+    afin d'optimiser le fichier pour l'import dans Final Cut Pro ou Compressor.
+    """
+    reencoded_file = file_path.replace(".mp4", "_reencoded.mp4")
+    cmd = [
+        "ffmpeg", "-i", file_path,
+        "-c:v", "libx264", "-preset", "slow", "-crf", "18",
+        "-c:a", "copy",
+        "-movflags", "faststart",
+        reencoded_file
+    ]
+    try:
+        subprocess.run(cmd, check=True)
+        return reencoded_file
+    except Exception as e:
+        print("Erreur lors du ré-encodage du fichier MP4:", e)
+        return file_path
+
 class YoutubeDownloaderApp(ttk.Window):
-    """
-    ViDL – Téléchargeur YouTube avec une interface modernisée.
-    """
     def __init__(self, *args, **kwargs):
-        # Utiliser Darkly par défaut
         kwargs["themename"] = kwargs.get("themename", "darkly")
         super().__init__(*args, **kwargs)
-
         self.title("ViDL - Téléchargeur YouTube")
         sys.argv[0] = "ViDL"
-
-        # Augmenter légèrement la taille de la fenêtre
         self.center_window(800, 705)
-
-        # Icône de l'application
         try:
             icon_img = tk.PhotoImage(file="/Users/pierredv/Coding/yt-downloader/icon.png")
             self.iconphoto(False, icon_img)
         except:
             pass
-
-        # Mettre la fenêtre au premier plan brièvement
         self.lift()
         self.attributes("-topmost", True)
         self.after(10, lambda: self.attributes("-topmost", False))
-
-        # Police par défaut
         default_font = tkFont.Font(family="Helvetica", size=12)
         self.option_add("*Font", default_font)
-
-        # Configuration de styles personnalisés pour un look moderne
         self.style.configure("Card.TFrame", background=self.style.colors.get("light"), padding=10, relief="flat")
         self.style.configure("Card.TLabel", background=self.style.colors.get("light"))
         self.progress_style_name = "download.Horizontal.TProgressbar"
@@ -293,8 +267,6 @@ class YoutubeDownloaderApp(ttk.Window):
                              troughcolor=self.style.colors.get("dark"),
                              background=self.style.colors.get("info"),
                              borderwidth=0)
-
-        # Variables de données
         self.video_format_list = []
         self.audio_format_list = []
         self.url_var = ttk.StringVar()
@@ -305,32 +277,22 @@ class YoutubeDownloaderApp(ttk.Window):
         self.download_target = 0.0
         self.animation_in_progress = False
         self.skip_first_progress_value = True
-        self.cancelled = False  # Pour suivre si l'utilisateur a annulé
-
+        self.cancelled = False
         self.open_folder_var = ttk.BooleanVar(value=True)
         self.output_dir = os.path.join(os.path.expanduser("~"), "Downloads")
         self.thumb_image_tk = None
         self.downloaded_file_path = None
-        self.download_process = None  # Pour gérer l'annulation
-
-        # Placeholder pour la miniature
+        self.download_process = None
         placeholder_img = Image.new("RGB", (240, 135), (50, 50, 50))
         self.placeholder_tk = ImageTk.PhotoImage(placeholder_img)
-
-        # Placeholder pour la barre de recherche
         self.url_placeholder = "Entrez l'URL de la vidéo YouTube…"
         self.url_var.set(self.url_placeholder)
-
-        # Pour stocker les infos de la vidéo courante (définies lors de l'analyse)
         self.current_video_info = {}
-
-        # Gestion de l'historique
-        self.history = []       # Liste d'entrées de téléchargement
-        self.history_images = {}  # Dictionnaire pour conserver les PhotoImage des thumbnails
-        # Utiliser history.json dans le dossier de l'application
+        self.history = []
+        self.history_images = {}
         self.history_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "history.json")
         self.load_history()
-
+        self.encoding = False  # Indicateur pour l'animation du ré‑encodage
         self.build_menu()
         self.build_ui()
 
@@ -348,23 +310,17 @@ class YoutubeDownloaderApp(ttk.Window):
         menu_vidl.add_separator()
         menu_vidl.add_command(label="Quitter", command=self.quit)
         menubar.add_cascade(label="ViDL", menu=menu_vidl)
-
         menu_options = ttk.Menu(menubar, tearoff=False)
         menu_themes = ttk.Menu(menu_options, tearoff=False)
         theme_list = ["darkly", "flatly", "litera", "journal", "cyborg", "minty"]
         for theme_name in theme_list:
-            menu_themes.add_command(
-                label=theme_name,
-                command=lambda t=theme_name: self.change_theme(t)
-            )
+            menu_themes.add_command(label=theme_name, command=lambda t=theme_name: self.change_theme(t))
         menu_options.add_cascade(label="Changer de thème", menu=menu_themes)
         menubar.add_cascade(label="Options", menu=menu_options)
-
         self.config(menu=menubar)
 
     def show_about(self):
-        messagebox.showinfo("À propos",
-            "ViDL - Téléchargeur YouTube\n© 2025")
+        messagebox.showinfo("À propos", "ViDL - Téléchargeur YouTube\n© 2025")
 
     def change_theme(self, theme_name):
         self.style.theme_use(theme_name)
@@ -372,162 +328,107 @@ class YoutubeDownloaderApp(ttk.Window):
     def build_ui(self):
         container = ttk.Frame(self, padding=15)
         container.pack(fill=tk.BOTH, expand=True)
-
-        # Ajout d'un padding sur le Notebook pour éviter les chevauchements (surtout sur macOS)
         self.notebook = ttk.Notebook(container, padding=10)
         self.notebook.pack(fill=tk.BOTH, expand=True)
-
         self.tab_download = ttk.Frame(self.notebook)
         self.tab_history = ttk.Frame(self.notebook)
-
         self.notebook.add(self.tab_download, text="Téléchargement")
         self.notebook.add(self.tab_history, text="Historique")
-
         self.build_download_tab()
         self.build_history_tab()
 
     def build_download_tab(self):
-        # Utilisation de grid pour organiser les widgets principaux de l'onglet Téléchargement
         self.tab_download.columnconfigure(0, weight=1)
-
-        # --- Titre de l'onglet Téléchargement
         title_label = ttk.Label(self.tab_download, text="ViDL - Téléchargeur YouTube",
-                                font=("Helvetica", 24, "bold"), anchor="center", justify="center")
-        title_label.grid(row=0, column=0, pady=(10, 10), sticky="ew")
-
-        # --- Section Analyse de la vidéo
+                                  font=("Helvetica", 24, "bold"), anchor="center", justify="center")
+        title_label.grid(row=0, column=0, pady=(10,10), sticky="ew")
         frm_analyze = ttk.Labelframe(self.tab_download, text="Analyse de la vidéo", padding=15)
         frm_analyze.grid(row=1, column=0, padx=10, pady=10, sticky="ew")
-
-        # Ligne 1 : Barre de recherche
         frm_search = ttk.Frame(frm_analyze)
         frm_search.pack(fill=tk.X, padx=5, pady=5)
-
         lbl_url = ttk.Label(frm_search, text="URL :")
         lbl_url.pack(side=tk.LEFT, padx=5, pady=5)
-
         self.ent_url = ttk.Entry(frm_search, textvariable=self.url_var, width=60)
         self.ent_url.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, pady=5)
         self.ent_url.bind("<FocusIn>", self.clear_url_placeholder)
         self.ent_url.bind("<FocusOut>", self.add_url_placeholder)
-
-        # Bouton pour coller l'URL
-        btn_paste = ttk.Button(frm_search, text="📋",
-                               bootstyle="secondary",
-                               command=self.paste_url)
+        btn_paste = ttk.Button(frm_search, text="📋", bootstyle="secondary", command=self.paste_url)
         btn_paste.pack(side=tk.LEFT, padx=5, pady=5)
         CreateToolTip(btn_paste, "Collez l'URL depuis le presse-papiers")
-
-        btn_analyze = ttk.Button(frm_search, text="🔍 Analyser",
-                                 bootstyle="primary",
-                                 command=self.analyze_video)
+        btn_analyze = ttk.Button(frm_search, text="🔍 Analyser", bootstyle="primary", command=self.analyze_video)
         btn_analyze.pack(side=tk.LEFT, padx=5, pady=5)
         CreateToolTip(btn_analyze, "Analyser la vidéo")
-
-        # Ligne 2 : Zone de statut et barre de progression d'analyse
         frm_status = ttk.Frame(frm_analyze)
         frm_status.pack(fill=tk.X, padx=5, pady=(0,5))
         self.lbl_analyze_info = ttk.Label(frm_status, text="", foreground="#aaa")
         self.lbl_analyze_info.pack(side=tk.LEFT, padx=5, pady=5)
-        self.analyze_progress = ttk.Progressbar(frm_status, 
-                                                style="Analyze.Horizontal.TProgressbar",
-                                                orient=tk.HORIZONTAL,
-                                                mode='indeterminate')
+        self.analyze_progress = ttk.Progressbar(frm_status, style="Analyze.Horizontal.TProgressbar",
+                                                orient=tk.HORIZONTAL, mode='indeterminate')
         self.analyze_progress.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, pady=5)
-        self.analyze_progress.pack_forget()  # Cachée par défaut
-
-        # Ligne 3 : Miniature et infos de la vidéo
+        self.analyze_progress.pack_forget()
         frm_thumbinfo = ttk.Frame(frm_analyze)
         frm_thumbinfo.pack(fill=tk.X, pady=10)
-
         card_frame = ttk.Frame(frm_thumbinfo, style="Card.TFrame")
         card_frame.pack(fill=tk.X, padx=5, pady=5)
-
         self.lbl_thumbnail = ttk.Label(card_frame, image=self.placeholder_tk)
         self.lbl_thumbnail.grid(row=0, column=0, rowspan=6, padx=10, pady=5)
-
         self.lbl_video_title = ttk.Label(card_frame, text="Titre :", style="Card.TLabel", font=("Helvetica", 16, "bold"))
         self.lbl_video_title.grid(row=0, column=1, sticky="w", padx=5, pady=(5,2))
-
         self.lbl_video_channel = ttk.Label(card_frame, text="Chaîne :", style="Card.TLabel", font=("Helvetica", 12))
         self.lbl_video_channel.grid(row=1, column=1, sticky="w", padx=5, pady=2)
-
         self.lbl_video_date = ttk.Label(card_frame, text="Date :", style="Card.TLabel", font=("Helvetica", 12))
         self.lbl_video_date.grid(row=2, column=1, sticky="w", padx=5, pady=2)
-
         self.lbl_video_views = ttk.Label(card_frame, text="Vues :", style="Card.TLabel", font=("Helvetica", 12))
         self.lbl_video_views.grid(row=3, column=1, sticky="w", padx=5, pady=2)
-
         self.lbl_video_likes = ttk.Label(card_frame, text="Likes :", style="Card.TLabel", font=("Helvetica", 12))
         self.lbl_video_likes.grid(row=4, column=1, sticky="w", padx=5, pady=2)
-        
         self.lbl_video_comments = ttk.Label(card_frame, text="Commentaires :", style="Card.TLabel", font=("Helvetica", 12))
         self.lbl_video_comments.grid(row=5, column=1, sticky="w", padx=5, pady=2)
-        # Pour que la colonne 1 prenne tout l'espace disponible
         card_frame.grid_columnconfigure(1, weight=1)
-
-        # --- Section Téléchargement
         frm_download = ttk.Labelframe(self.tab_download, text="Téléchargement", padding=15)
         frm_download.grid(row=2, column=0, padx=10, pady=10, sticky="ew")
-
         for col_index in range(4):
             frm_download.columnconfigure(col_index, weight=1)
-
         radio_mp4 = ttk.Radiobutton(frm_download, text="Exporter en mp4",
-                                    variable=self.export_type_var, value="mp4",
-                                    command=self.update_format_list)
+                                    variable=self.export_type_var, value="mp4", command=self.update_format_list)
         radio_mp4.grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
-
         radio_mp3 = ttk.Radiobutton(frm_download, text="Exporter en mp3",
-                                    variable=self.export_type_var, value="mp3",
-                                    command=self.update_format_list)
+                                    variable=self.export_type_var, value="mp3", command=self.update_format_list)
         radio_mp3.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
-
         lbl_format = ttk.Label(frm_download, text="Format d'origine :")
         lbl_format.grid(row=0, column=2, sticky=tk.E, padx=5, pady=5)
-
         self.combo_format = ttk.Combobox(frm_download, textvariable=self.selected_format,
                                          width=40, state="readonly")
         self.combo_format.grid(row=0, column=3, sticky=(tk.W, tk.E), padx=5, pady=5)
-
         btn_choose_dir = ttk.Button(frm_download, text="Choisir dossier...",
-                                    bootstyle="secondary",
-                                    command=self.choose_download_folder)
+                                    bootstyle="secondary", command=self.choose_download_folder)
         btn_choose_dir.grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
         CreateToolTip(btn_choose_dir, "Sélectionnez le dossier de téléchargement")
-
         btn_frame = ttk.Frame(frm_download)
         btn_frame.grid(row=1, column=2, columnspan=2, sticky=tk.E, padx=5, pady=5)
         self.btn_cancel = ttk.Button(btn_frame, text="✖️ Annuler", bootstyle="danger-outline",
                                      command=self.cancel_download, state="disabled")
-        self.btn_cancel.pack(side=tk.LEFT, padx=(0, 5))
+        self.btn_cancel.pack(side=tk.LEFT, padx=(0,5))
         CreateToolTip(self.btn_cancel, "Annuler le téléchargement")
-        btn_download = ttk.Button(btn_frame, text="📥 Télécharger", bootstyle="success",
-                                  command=self.download_video)
+        btn_download = ttk.Button(btn_frame, text="📥 Télécharger", bootstyle="success", command=self.download_video)
         btn_download.pack(side=tk.LEFT)
         CreateToolTip(btn_download, "Démarrer le téléchargement")
-
-        chk_open_folder = ttk.Checkbutton(frm_download,
-                                          text="Ouvrir le dossier à la fin",
-                                          variable=self.open_folder_var,
-                                          bootstyle="round-toggle")
+        chk_open_folder = ttk.Checkbutton(frm_download, text="Ouvrir le dossier à la fin",
+                                          variable=self.open_folder_var, bootstyle="round-toggle")
         chk_open_folder.grid(row=2, column=0, columnspan=4, sticky=tk.W, padx=5, pady=5)
-
-        self.progress_bar = ttk.Progressbar(
-            frm_download,
-            style=self.progress_style_name,
-            orient=tk.HORIZONTAL,
-            mode='determinate',
-            variable=self.progress_val
-        )
+        self.progress_bar = ttk.Progressbar(frm_download, style=self.progress_style_name,
+                                            orient=tk.HORIZONTAL, mode='determinate',
+                                            variable=self.progress_val)
         self.progress_bar.grid(row=3, column=0, columnspan=4, pady=10, sticky="we")
-
-        self.lbl_status = ttk.Label(frm_download, textvariable=self.status_var,
-                                    foreground="#aaa")
-        self.lbl_status.grid(row=4, column=0, columnspan=4, sticky=tk.W, pady=5)
+        # Cadre pour afficher le label de statut et le bouton de ré-encodage sur la même ligne
+        status_frame = ttk.Frame(frm_download)
+        status_frame.grid(row=4, column=0, columnspan=4, sticky="we", pady=5)
+        self.lbl_status = ttk.Label(status_frame, textvariable=self.status_var, foreground="#aaa")
+        self.lbl_status.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.btn_reencode = ttk.Button(status_frame, text="Re‑encoder MP4", bootstyle="primary", command=self.reencode_mp4)
+        self.btn_reencode.pack_forget()  # Masqué initialement
 
     def build_history_tab(self):
-        # Partie Recherche
         search_frame = ttk.Frame(self.tab_history)
         search_frame.pack(fill=tk.X, padx=5, pady=5)
         lbl_search = ttk.Label(search_frame, text="Recherche :")
@@ -536,17 +437,10 @@ class YoutubeDownloaderApp(ttk.Window):
         self.ent_search = ttk.Entry(search_frame, textvariable=self.search_var)
         self.ent_search.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
         self.ent_search.bind("<KeyRelease>", self.update_history_view)
-
-        # Conteneur pour afficher chaque téléchargement dans l'historique
         self.history_frame = ttk.Frame(self.tab_history)
         self.history_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-
-        # Remplissage initial de l'historique
         self.update_history_view()
 
-    # ---------------------------------------------------------
-    # Gestion du placeholder dans la barre de recherche
-    # ---------------------------------------------------------
     def clear_url_placeholder(self, event):
         if self.url_var.get() == self.url_placeholder:
             self.url_var.set("")
@@ -555,11 +449,7 @@ class YoutubeDownloaderApp(ttk.Window):
         if not self.url_var.get():
             self.url_var.set(self.url_placeholder)
 
-    # ---------------------------------------------------------
-    # Méthodes d'interaction de l'interface
-    # ---------------------------------------------------------
     def paste_url(self):
-        """Colle le contenu du presse-papiers dans la barre d'URL."""
         try:
             txt = self.clipboard_get()
             if txt == self.url_placeholder:
@@ -572,25 +462,18 @@ class YoutubeDownloaderApp(ttk.Window):
         new_dir = filedialog.askdirectory(title="Choisir le dossier de téléchargement")
         if new_dir:
             self.output_dir = new_dir
-            messagebox.showinfo("Dossier choisi",
-                                f"Les vidéos seront enregistrées dans :\n{self.output_dir}")
+            messagebox.showinfo("Dossier choisi", f"Les vidéos seront enregistrées dans :\n{self.output_dir}")
 
-    # ---------------------------------------------------------
-    # Analyse de la vidéo
-    # ---------------------------------------------------------
     def analyze_video(self):
         url = self.url_var.get().strip()
         if not url or url == self.url_placeholder:
             messagebox.showwarning("Attention", "Veuillez saisir une URL.")
             return
-
         self.video_format_list.clear()
         self.audio_format_list.clear()
         self.combo_format['values'] = []
         self.selected_format.set('')
         self.lbl_analyze_info.config(text="Analyse en cours…")
-
-        # Réinitialiser la miniature et les infos
         self.lbl_thumbnail.config(image=self.placeholder_tk)
         self.lbl_video_title.config(text="Titre :")
         self.lbl_video_channel.config(text="Chaîne :")
@@ -598,20 +481,14 @@ class YoutubeDownloaderApp(ttk.Window):
         self.lbl_video_views.config(text="Vues :")
         self.lbl_video_likes.config(text="Likes :")
         self.lbl_video_comments.config(text="Commentaires :")
-
         self.analyze_progress.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, pady=5)
         self.analyze_progress.start(10)
-
         threading.Thread(target=self.run_analysis_thread, args=(url,), daemon=True).start()
 
     def run_analysis_thread(self, url):
-        # 1) Formats disponibles
         v_list, a_list = parse_available_formats(url)
-        # 2) URL du thumbnail
         thumb_url = get_thumbnail_url(url)
-        # 3) Infos (titre, chaîne, date, vues, likes, commentaires)
         video_title, video_channel, video_pubdate, view_count, like_count, comment_count = get_video_info(url)
-
         thumb_image = None
         if thumb_url:
             try:
@@ -623,29 +500,23 @@ class YoutubeDownloaderApp(ttk.Window):
                 thumb_image = ImageTk.PhotoImage(pil_img)
             except:
                 pass
-
         def on_finish():
             self.analyze_progress.stop()
             self.analyze_progress.pack_forget()
-
             if not v_list and not a_list:
                 messagebox.showerror("Erreur", "Aucun format exploitable trouvé.")
                 self.lbl_analyze_info.config(text="Aucun format exploitable trouvé.")
                 return
-
             self.video_format_list = v_list
             self.audio_format_list = a_list
             self.update_format_list()
-
             info_txt = f"{len(v_list)} formats vidéo, {len(a_list)} formats audio."
             self.lbl_analyze_info.config(text=info_txt)
-
             if thumb_image:
                 self.thumb_image_tk = thumb_image
                 self.lbl_thumbnail.config(image=self.thumb_image_tk, text='')
             else:
                 self.lbl_thumbnail.config(image='', text="Pas de miniature")
-
             if video_title:
                 self.lbl_video_title.config(text=f"Titre : {video_title}")
             if video_channel:
@@ -658,14 +529,11 @@ class YoutubeDownloaderApp(ttk.Window):
                 self.lbl_video_likes.config(text=f"Likes : {like_count:,}")
             if comment_count is not None:
                 self.lbl_video_comments.config(text=f"Commentaires : {comment_count:,}")
-
-            # Sauvegarde des infos de la vidéo analysée pour l'historique
             self.current_video_info = {
                 "title": video_title,
                 "url": url,
                 "thumbnail_url": thumb_url
             }
-
         self.after(0, on_finish)
 
     def update_format_list(self):
@@ -674,7 +542,6 @@ class YoutubeDownloaderApp(ttk.Window):
             current_list = self.video_format_list
         else:
             current_list = self.audio_format_list
-
         combo_values = [item[1] for item in current_list]
         self.combo_format['values'] = combo_values
         if combo_values:
@@ -682,34 +549,26 @@ class YoutubeDownloaderApp(ttk.Window):
         else:
             self.selected_format.set('')
 
-    # ---------------------------------------------------------
-    # Téléchargement de la vidéo
-    # ---------------------------------------------------------
     def download_video(self):
         url = self.url_var.get().strip()
         if not url or url == self.url_placeholder:
             messagebox.showwarning("Attention", "URL manquante.")
             return
-
         chosen_export = self.export_type_var.get()
         if chosen_export == "mp4":
             current_list = self.video_format_list
         else:
             current_list = self.audio_format_list
-
         if not current_list:
             messagebox.showwarning("Attention", "Veuillez analyser la vidéo d'abord (ou aucun format trouvé).")
             return
-
         current_val = self.selected_format.get().strip()
         if not current_val:
             messagebox.showwarning("Attention", "Aucun format sélectionné.")
             return
-
         combo_id = current_val.split("|")[0].strip()
         self.downloaded_file_path = None
         output_template = os.path.join(self.output_dir, "%(title)s.%(ext)s")
-
         if chosen_export == "mp4":
             cmd = [
                 "yt-dlp",
@@ -729,12 +588,11 @@ class YoutubeDownloaderApp(ttk.Window):
                 "-o", output_template,
                 url
             ]
-
         self.progress_val.set(0.0)
         self.download_target = 0.0
         self.status_var.set("Téléchargement en cours... 0.0%")
         self.skip_first_progress_value = True
-
+        self.btn_reencode.pack_forget()  # Masquer le bouton de ré‑encodage s'il était affiché
         self.cancelled = False
         self.btn_cancel.config(state="normal")
         threading.Thread(target=self.run_download_thread, args=(cmd,), daemon=True).start()
@@ -743,48 +601,34 @@ class YoutubeDownloaderApp(ttk.Window):
         download_regex = re.compile(r'^\[download\]\s+([\d\.]+)%')
         destination_regex = re.compile(r'^\[download\]\s+Destination:\s+(.+)$')
         merger_regex = re.compile(r'^\[Merger\]\s+Merging formats into\s+"(.+)"$')
-
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            universal_newlines=True
-        )
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                   text=True, universal_newlines=True)
         self.download_process = process
-
         for line in process.stdout:
             line = line.strip()
             match = download_regex.match(line)
             if match:
-                val_str = match.group(1)
                 try:
-                    val_float = float(val_str)
+                    val_float = float(match.group(1))
                 except ValueError:
                     val_float = 0.0
-
                 if self.skip_first_progress_value:
                     self.skip_first_progress_value = False
                     continue
-
                 current_v = self.progress_val.get()
                 new_val = max(current_v, val_float)
                 self.after(0, self.set_smooth_target, new_val)
-
             match_dest = destination_regex.match(line)
             if match_dest:
                 self.downloaded_file_path = match_dest.group(1).strip()
-
             match_merger = merger_regex.match(line)
             if match_merger:
                 final_merged = match_merger.group(1).strip()
                 self.downloaded_file_path = final_merged
-
         process.wait()
         retcode = process.returncode
         self.after(0, lambda: self.btn_cancel.config(state="disabled"))
         self.download_process = None
-
         if retcode == 0:
             self.after(0, lambda: self.finish_progress(True))
         else:
@@ -800,9 +644,6 @@ class YoutubeDownloaderApp(ttk.Window):
                 print("Erreur lors de l'annulation :", e)
             self.btn_cancel.config(state="disabled")
 
-    # ---------------------------------------------------------
-    # Animation de la barre de progression
-    # ---------------------------------------------------------
     def set_smooth_target(self, new_target):
         cur = self.progress_val.get()
         if new_target < cur:
@@ -815,7 +656,6 @@ class YoutubeDownloaderApp(ttk.Window):
     def animate_progress(self):
         current = self.progress_val.get()
         target = self.download_target
-
         if abs(target - current) < 0.5:
             self.progress_val.set(target)
             self.animation_in_progress = False
@@ -829,7 +669,6 @@ class YoutubeDownloaderApp(ttk.Window):
 
     def finish_progress(self, success):
         self.animation_in_progress = False
-
         if success:
             self.download_target = 100
             self.progress_val.set(100)
@@ -846,8 +685,11 @@ class YoutubeDownloaderApp(ttk.Window):
                         file_size_msg = f" ({size_mb:.1f} MB)"
                     except Exception as e:
                         print("Erreur lors de l'obtention de la taille du fichier:", e)
-            self.status_var.set(f"Téléchargement terminé{file_size_msg}.")
-            # Ajout à l'historique
+            if self.downloaded_file_path and self.export_type_var.get() == "mp4":
+                self.status_var.set(f"Téléchargement terminé{file_size_msg}. Cliquez sur 'Re‑encoder MP4' pour optimiser l'import dans Final Cut Pro.")
+                self.btn_reencode.pack(side=tk.RIGHT)
+            else:
+                self.status_var.set(f"Téléchargement terminé{file_size_msg}.")
             if self.current_video_info and self.current_video_info.get("title"):
                 entry = self.current_video_info.copy()
                 entry["download_date"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -864,6 +706,33 @@ class YoutubeDownloaderApp(ttk.Window):
                 self.status_var.set("Échec du téléchargement.")
                 messagebox.showerror("Erreur", "Erreur lors du téléchargement.")
 
+    def update_encoding_progress(self, percent):
+        self.progress_val.set(percent)
+        self.update_idletasks()
+
+    def reencode_mp4(self):
+        """Ré-encode le fichier MP4 en affichant une animation textuelle des points."""
+        if self.downloaded_file_path and os.path.exists(self.downloaded_file_path):
+            self.status_var.set("Ré‑encodage du fichier MP4 en cours")
+            self.progress_val.set(0)
+            self.encoding = True
+            def animate_encoding():
+                while self.encoding:
+                    # Cycle des points (0 à 3)
+                    dots = "." * ((int(time.time() * 2) % 4))
+                    self.status_var.set("Ré‑encodage en cours" + dots)
+                    self.update_idletasks()
+                    time.sleep(0.5)
+            threading.Thread(target=animate_encoding, daemon=True).start()
+            def reencode_task():
+                reencoded = reencode_mp4_file(self.downloaded_file_path)
+                os.replace(reencoded, self.downloaded_file_path)
+                self.encoding = False
+                self.status_var.set("Fichier MP4 ré‑encodé et optimisé.")
+                self.progress_val.set(100)
+                self.btn_reencode.pack_forget()
+            threading.Thread(target=reencode_task, daemon=True).start()
+
     def open_downloads_folder(self):
         system = platform.system()
         if system == "Darwin":
@@ -873,9 +742,6 @@ class YoutubeDownloaderApp(ttk.Window):
         else:
             subprocess.run(["xdg-open", self.output_dir])
 
-    # ---------------------------------------------------------
-    # Gestion de l'historique
-    # ---------------------------------------------------------
     def load_history(self):
         if os.path.exists(self.history_file):
             try:
@@ -895,31 +761,31 @@ class YoutubeDownloaderApp(ttk.Window):
             print("Erreur lors de la sauvegarde de l'historique :", e)
 
     def add_to_history(self, entry):
+        new_date = entry.get("download_date", "")
+        new_title = entry.get("title", "")
+        new_url = entry.get("url", "")
+        new_date_part = new_date.split()[0] if new_date else ""
+        for existing in self.history:
+            existing_date = existing.get("download_date", "")
+            existing_date_part = existing_date.split()[0] if existing_date else ""
+            if (existing.get("title") == new_title or existing.get("url") == new_url) and existing_date_part == new_date_part:
+                return
         self.history.append(entry)
         self.save_history()
         self.update_history_view()
 
     def update_history_view(self, event=None):
-        # Effacer l'affichage actuel
         for widget in self.history_frame.winfo_children():
             widget.destroy()
-
-        # Récupérer le filtre de recherche
         query = self.search_var.get().lower() if hasattr(self, "search_var") else ""
         for entry in self.history:
             title = entry.get("title", "")
             url = entry.get("url", "")
             date = entry.get("download_date", "")
-
-            # Filtrer par titre ou URL si nécessaire
             if query and (query not in title.lower() and query not in url.lower()):
                 continue
-
-            # Création d'un mini-container pour chaque téléchargement
             item_frame = ttk.Frame(self.history_frame)
-            item_frame.pack(fill=tk.X, padx=10, pady=(5, 0))
-
-            # Récupérer ou télécharger le thumbnail
+            item_frame.pack(fill=tk.X, padx=10, pady=(5,0))
             thumb_url = entry.get("thumbnail_url")
             if thumb_url in self.history_images:
                 photo = self.history_images[thumb_url]
@@ -934,27 +800,19 @@ class YoutubeDownloaderApp(ttk.Window):
                 except:
                     photo = self.placeholder_tk
                 self.history_images[thumb_url] = photo
-
             lbl_thumbnail = ttk.Label(item_frame, image=photo)
-            lbl_thumbnail.pack(side=tk.LEFT, padx=(0, 10))
-
-            # Conteneur pour les infos textuelles
+            lbl_thumbnail.pack(side=tk.LEFT, padx=(0,10))
             text_frame = ttk.Frame(item_frame)
             text_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
             lbl_title = ttk.Label(text_frame, text=f"{title}", font=("Helvetica", 12, "bold"))
             lbl_title.pack(anchor=tk.W)
             lbl_url = ttk.Label(text_frame, text=f"{url}", font=("Helvetica", 10), foreground="#555")
             lbl_url.pack(anchor=tk.W)
             lbl_date = ttk.Label(text_frame, text=f"{date}", font=("Helvetica", 10), foreground="#888")
             lbl_date.pack(anchor=tk.W)
-
-            # Lier un double-clic sur l'item pour réutiliser l'URL
             item_frame.bind("<Double-1>", lambda event, url=url: self.on_history_item_double_click(url))
             for child in item_frame.winfo_children():
                 child.bind("<Double-1>", lambda event, url=url: self.on_history_item_double_click(url))
-
-            # Ligne séparatrice (une seule ligne fine, style macOS)
             sep = ttk.Separator(self.history_frame, orient="horizontal")
             sep.pack(fill=tk.X, padx=10, pady=5)
 
