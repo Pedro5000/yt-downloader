@@ -415,6 +415,9 @@ class YoutubeDownloaderApp(ttk.Window):
         self.lift()
         self.attributes("-topmost", True)
         self.after(10, lambda: self.attributes("-topmost", False))
+        # --- Transparence de la fenêtre sur MacOS (alpha à 0.98) ---
+        if sys.platform == "darwin":
+            self.attributes("-alpha", 0.98)
         default_font = tkFont.Font(family="Segoe UI", size=12)
         self.option_add("*Font", default_font)
         self.style.configure("Card.TFrame", background=self.style.colors.get("light"), padding=10, relief="flat")
