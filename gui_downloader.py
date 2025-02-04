@@ -54,6 +54,22 @@ def normalize_url(url):
         return url.split("&")[0]
     return url
 
+def format_duration(duration):
+    """
+    Convertit une durée (en secondes) en format mm:ss ou hh:mm:ss.
+    """
+    try:
+        duration = int(duration)
+    except Exception:
+        return str(duration)
+    hours = duration // 3600
+    minutes = (duration % 3600) // 60
+    seconds = duration % 60
+    if hours > 0:
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    else:
+        return f"{minutes:02d}:{seconds:02d}"
+
 # ---------------------------------------------------------
 # UI strings dictionary generator
 # ---------------------------------------------------------
@@ -373,25 +389,10 @@ def get_video_info(video_url):
         print("Error retrieving video info:", e)
         return None, None, None, None, None, None, None
 
-def reencode_mp4_file(file_path):
-    """
-    Re-encodes an MP4 file in H264 with the 'faststart' option,
-    to optimize the file for import into Final Cut Pro or Compressor.
-    """
-    reencoded_file = file_path.replace(".mp4", "_reencoded.mp4")
-    cmd = [
-        "ffmpeg", "-i", file_path,
-        "-c:v", "libx264", "-preset", "slow", "-crf", "18",
-        "-c:a", "copy",
-        "-movflags", "faststart",
-        reencoded_file
-    ]
-    try:
-        subprocess.run(cmd, check=True)
-        return reencoded_file
-    except Exception as e:
-        print("Error during MP4 re-encoding:", e)
-        return file_path
+# ---------------------------------------------------------
+# Function to re-encode MP4 with possibility to cancel
+# ---------------------------------------------------------
+# (La fonction reencode_mp4_file est intégrée dans la méthode de la classe afin de permettre l'interruption)
 
 # ---------------------------------------------------------
 # Main application class for the YouTube Downloader
@@ -404,7 +405,7 @@ class YoutubeDownloaderApp(ttk.Window):
         self.ui_strings = get_ui_strings(self.language)
         self.title(self.ui_strings["title"])
         sys.argv[0] = "ViDL"
-        # Élargissement de la fenêtre de 20px (de 800 à 820)
+        # Élargissement de la fenêtre de 20px (de 800 à 840)
         self.center_window(840, 705)
         try:
             icon_img = tk.PhotoImage(file="/Users/pierredv/Coding/yt-downloader/icon.png")
@@ -425,6 +426,8 @@ class YoutubeDownloaderApp(ttk.Window):
                              troughcolor=self.style.colors.get("dark"),
                              background=self.style.colors.get("info"),
                              borderwidth=0)
+        # Configuration d'un style pour les boutons dans l'historique (aspect plus compact et flat, à la MacOS)
+        self.style.configure("History.TButton", padding=2, font=("Helvetica", 10))
         # Lists to store available formats
         self.video_format_list = []  # list of dicts for video formats
         self.audio_format_list = []  # list of tuples for audio formats
@@ -443,6 +446,10 @@ class YoutubeDownloaderApp(ttk.Window):
         self.thumb_image_tk = None
         self.downloaded_file_path = None
         self.download_process = None
+        # Variables pour le ré‑encodage
+        self.encoding = False
+        self.reencode_process = None
+        self.cancel_reencode = False
         placeholder_img = Image.new("RGB", (240, 135), (50, 50, 50))
         self.placeholder_tk = ImageTk.PhotoImage(placeholder_img)
         self.url_placeholder = self.ui_strings["url_placeholder"]
@@ -453,7 +460,6 @@ class YoutubeDownloaderApp(ttk.Window):
         self.history_images = {}
         self.history_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "history.json")
         self.load_history()
-        self.encoding = False
         self.build_menu()
         self.build_ui()
 
@@ -573,6 +579,7 @@ class YoutubeDownloaderApp(ttk.Window):
         self.lbl_video_channel.grid(row=1, column=1, sticky="w", padx=5, pady=1)
         self.lbl_video_date = ttk.Label(card_frame, text="Date :", style="Card.TLabel", font=("Helvetica", 12))
         self.lbl_video_date.grid(row=2, column=1, sticky="w", padx=5, pady=1)
+        # Utilisation de la fonction format_duration pour afficher la durée au format mm:ss ou hh:mm:ss
         self.lbl_video_duration = ttk.Label(card_frame, text="Durée :", style="Card.TLabel", font=("Helvetica", 12))
         self.lbl_video_duration.grid(row=3, column=1, sticky="w", padx=5, pady=1)
         self.lbl_video_views = ttk.Label(card_frame, text="Vues :", style="Card.TLabel", font=("Helvetica", 12))
@@ -624,6 +631,7 @@ class YoutubeDownloaderApp(ttk.Window):
         status_frame.grid(row=4, column=0, columnspan=4, sticky="we", pady=5)
         self.lbl_status = ttk.Label(status_frame, textvariable=self.status_var, foreground="#aaa")
         self.lbl_status.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        # Le même bouton est utilisé pour lancer le ré‑encodage et, pendant l'opération, pour l'arrêter.
         self.btn_reencode = ttk.Button(status_frame, text=self.ui_strings["reencode_mp4"],
                                        bootstyle="primary", command=self.reencode_mp4)
         self.btn_reencode.pack_forget()
@@ -707,6 +715,7 @@ class YoutubeDownloaderApp(ttk.Window):
         self.lbl_video_title.config(text="Titre :" if self.language=="fr" else "Title:")
         self.lbl_video_channel.config(text="Chaîne :" if self.language=="fr" else "Channel:")
         self.lbl_video_date.config(text="Date :" if self.language=="fr" else "Date:")
+        # Affichage de la durée en format mm:ss ou hh:mm:ss
         self.lbl_video_duration.config(text="Durée :" if self.language=="fr" else "Duration:")
         self.lbl_video_views.config(text="Vues :" if self.language=="fr" else "Views:")
         self.lbl_video_likes.config(text="Likes :" if self.language=="fr" else "Likes:")
@@ -756,7 +765,8 @@ class YoutubeDownloaderApp(ttk.Window):
             if video_pubdate:
                 self.lbl_video_date.config(text=f"{'Date' if self.language=='fr' else 'Date'}: {video_pubdate}")
             if duration is not None:
-                self.lbl_video_duration.config(text=f"{'Durée' if self.language=='fr' else 'Duration'}: {duration} sec")
+                # Affichage de la durée au format mm:ss ou hh:mm:ss
+                self.lbl_video_duration.config(text=f"{'Durée' if self.language=='fr' else 'Duration'}: {format_duration(duration)}")
             if view_count is not None:
                 self.lbl_video_views.config(text=f"{'Vues' if self.language=='fr' else 'Views'}: {view_count:,}")
             if like_count is not None:
@@ -1027,25 +1037,63 @@ class YoutubeDownloaderApp(ttk.Window):
         self.update_idletasks()
 
     def reencode_mp4(self):
-        if self.downloaded_file_path and os.path.exists(self.downloaded_file_path):
-            self.status_var.set(self.ui_strings["reencode_in_progress"])
-            self.progress_val.set(0)
-            self.encoding = True
-            def animate_encoding():
-                while self.encoding:
-                    dots = "." * ((int(time.time() * 2) % 4))
-                    self.status_var.set(self.ui_strings["reencode_in_progress"] + dots)
-                    self.update_idletasks()
-                    time.sleep(0.5)
-            threading.Thread(target=animate_encoding, daemon=True).start()
-            def reencode_task():
-                reencoded = reencode_mp4_file(self.downloaded_file_path)
-                os.replace(reencoded, self.downloaded_file_path)
-                self.encoding = False
-                self.status_var.set("MP4 file re‑encoded and optimized." if self.language=="en" else "Fichier MP4 ré‑encodé et optimisé.")
-                self.progress_val.set(100)
-                self.btn_reencode.pack_forget()
-            threading.Thread(target=reencode_task, daemon=True).start()
+        """
+        Lance le ré‑encodage du fichier MP4 ou, s'il est déjà en cours, l'arrête.
+        Lors du lancement, le bouton change de texte pour afficher "Arrêter" (ou "Stop" en anglais).
+        """
+        if not self.encoding:
+            # Lancer le ré‑encodage
+            if self.downloaded_file_path and os.path.exists(self.downloaded_file_path):
+                self.status_var.set(self.ui_strings["reencode_in_progress"])
+                self.progress_val.set(0)
+                self.encoding = True
+                self.cancel_reencode = False
+                # Changer le texte du bouton pour permettre l'arrêt
+                self.btn_reencode.config(text="Arrêter" if self.language=="fr" else "Stop")
+                def animate_encoding():
+                    while self.encoding:
+                        dots = "." * ((int(time.time() * 2) % 4))
+                        self.status_var.set(self.ui_strings["reencode_in_progress"] + dots)
+                        self.update_idletasks()
+                        time.sleep(0.5)
+                threading.Thread(target=animate_encoding, daemon=True).start()
+                def reencode_task():
+                    reencoded_file = self.downloaded_file_path.replace(".mp4", "_reencoded.mp4")
+                    cmd = [
+                        "ffmpeg", "-i", self.downloaded_file_path,
+                        "-c:v", "libx264", "-preset", "slow", "-crf", "18",
+                        "-c:a", "copy",
+                        "-movflags", "faststart",
+                        reencoded_file
+                    ]
+                    try:
+                        self.reencode_process = subprocess.Popen(cmd)
+                        self.reencode_process.wait()
+                        if self.cancel_reencode:
+                            if os.path.exists(reencoded_file):
+                                os.remove(reencoded_file)
+                            self.status_var.set("Re‑encoding cancelled." if self.language=="en" else "Ré‑encodage annulé.")
+                        else:
+                            os.replace(reencoded_file, self.downloaded_file_path)
+                            self.status_var.set("MP4 file re‑encoded and optimized." if self.language=="en" else "Fichier MP4 ré‑encodé et optimisé.")
+                            self.progress_val.set(100)
+                    except Exception as e:
+                        print("Error during MP4 re‑encoding:", e)
+                        self.status_var.set("Error during re‑encoding." if self.language=="en" else "Erreur lors du ré‑encodage.")
+                    finally:
+                        self.encoding = False
+                        self.reencode_process = None
+                        self.btn_reencode.config(text=self.ui_strings["reencode_mp4"])
+                threading.Thread(target=reencode_task, daemon=True).start()
+        else:
+            # Si le ré‑encodage est en cours, l'interrompre
+            self.cancel_reencode = True
+            if self.reencode_process and self.reencode_process.poll() is None:
+                try:
+                    self.reencode_process.terminate()
+                    self.status_var.set("Stopping re‑encoding..." if self.language=="en" else "Arrêt du ré‑encodage en cours...")
+                except Exception as e:
+                    print("Error terminating re‑encoding process:", e)
 
     def open_downloads_folder(self):
         system = platform.system()
@@ -1112,7 +1160,8 @@ class YoutubeDownloaderApp(ttk.Window):
                     r.raise_for_status()
                     img_data = r.content
                     pil_img = Image.open(io.BytesIO(img_data))
-                    pil_img = pil_img.resize((80, 45), Image.Resampling.LANCZOS)
+                    # Redimensionner à une taille plus petite pour un aspect élégant et MacOS-ish
+                    pil_img = pil_img.resize((60, 34), Image.Resampling.LANCZOS)
                     photo = ImageTk.PhotoImage(pil_img)
                 except:
                     photo = self.placeholder_tk
@@ -1132,12 +1181,14 @@ class YoutubeDownloaderApp(ttk.Window):
                 child.bind("<Double-1>", lambda event, url=url: self.on_history_item_double_click(url))
             btn_frame = ttk.Frame(item_frame)
             btn_frame.pack(side=tk.RIGHT, padx=5)
-            btn_copy = ttk.Button(btn_frame, text="📋", bootstyle="secondary", command=lambda url=url: self.copy_history_url(url))
+            btn_copy = ttk.Button(btn_frame, text="📋", bootstyle="flat", style="History.TButton", padding=2,
+                                  command=lambda url=url: self.copy_history_url(url))
             CreateToolTip(btn_copy, self.ui_strings["copy_url"])
-            btn_copy.pack(side=tk.TOP, padx=2, pady=2)
-            btn_delete = ttk.Button(btn_frame, text="🗑", bootstyle="danger-outline", command=lambda idx=idx: self.delete_history_item(idx))
+            btn_copy.pack(side=tk.LEFT, padx=2, pady=2)
+            btn_delete = ttk.Button(btn_frame, text="🗑", bootstyle="flat", style="History.TButton", padding=2,
+                                    command=lambda idx=idx: self.delete_history_item(idx))
             CreateToolTip(btn_delete, self.ui_strings["delete"])
-            btn_delete.pack(side=tk.TOP, padx=2, pady=2)
+            btn_delete.pack(side=tk.LEFT, padx=2, pady=2)
             sep = ttk.Separator(self.history_frame, orient="horizontal")
             sep.pack(fill=tk.X, padx=10, pady=5)
 
