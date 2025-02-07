@@ -34,25 +34,9 @@ def sanitize_filename(filename):
 
 def validate_url(url):
     """
-    Vérifie que l'URL commence par http:// ou https:// et qu'elle concerne YouTube.
+    Vérifie que l'URL commence par http:// ou https://.
     """
-    if not (url.startswith("http://") or url.startswith("https://")):
-        return False
-    if "youtube.com" not in url and "youtu.be" not in url:
-        return False
-    return True
-
-def normalize_url(url):
-    """
-    Conserve uniquement la partie de l'URL avant le premier '&'.
-    Par exemple, transforme :
-      "https://www.youtube.com/watch?v=ABC123&ab_channel=XYZ"
-    en :
-      "https://www.youtube.com/watch?v=ABC123"
-    """
-    if "&" in url:
-        return url.split("&")[0]
-    return url
+    return url.startswith("http://") or url.startswith("https://")
 
 def format_duration(duration):
     """
@@ -76,11 +60,11 @@ def format_duration(duration):
 def get_ui_strings(language):
     """
     Returns a dictionary with all UI strings for the specified language.
-    For French (language=="fr"), the terms correspond to the original version.
+    Pour le français (language=="fr"), les termes sont en français.
     """
     if language == "fr":
         return {
-            "title": "ViDL - Téléchargeur YouTube",
+            "title": "ViDL - Téléchargeur Universel",
             "about": "À propos",
             "quit": "Quitter",
             "options": "Options",
@@ -90,7 +74,7 @@ def get_ui_strings(language):
             "video_analysis": "Analyse de la vidéo",
             "download_labelframe": "Téléchargement",
             "url": "URL :",
-            "url_placeholder": "Entrez l'URL de la vidéo YouTube…",
+            "url_placeholder": "Entrez l'URL de la vidéo…",
             "paste_tooltip": "Collez l'URL depuis le presse-papiers",
             "analyze": "🔍 Analyser",
             "analyze_tooltip": "Analyser la vidéo",
@@ -125,10 +109,11 @@ def get_ui_strings(language):
             "english": "Anglais",
             "french": "Français",
             "reencode_in_progress": "Ré‑encodage en cours",
+            "invalid_url": "URL invalide. Veuillez entrer une URL valide (commençant par http:// ou https://)."
         }
     else:
         return {
-            "title": "ViDL - YouTube Downloader",
+            "title": "ViDL - Universal Downloader",
             "about": "About",
             "quit": "Quit",
             "options": "Options",
@@ -138,7 +123,7 @@ def get_ui_strings(language):
             "video_analysis": "Video Analysis",
             "download_labelframe": "Download",
             "url": "URL:",
-            "url_placeholder": "Enter the YouTube video URL…",
+            "url_placeholder": "Enter the video URL…",
             "paste_tooltip": "Paste the URL from the clipboard",
             "analyze": "🔍 Analyze",
             "analyze_tooltip": "Analyze the video",
@@ -173,6 +158,7 @@ def get_ui_strings(language):
             "english": "English",
             "french": "French",
             "reencode_in_progress": "Re‑encoding",
+            "invalid_url": "Invalid URL. Please enter a valid URL (starting with http:// or https://)."
         }
 
 # ---------------------------------------------------------
@@ -390,12 +376,7 @@ def get_video_info(video_url):
         return None, None, None, None, None, None, None
 
 # ---------------------------------------------------------
-# Function to re-encode MP4 with possibility to cancel
-# ---------------------------------------------------------
-# (La fonction reencode_mp4_file est intégrée dans la méthode de la classe afin de permettre l'interruption)
-
-# ---------------------------------------------------------
-# Main application class for the YouTube Downloader
+# Main application class for ViDL
 # ---------------------------------------------------------
 class YoutubeDownloaderApp(ttk.Window):
     def __init__(self, *args, **kwargs):
@@ -479,6 +460,7 @@ class YoutubeDownloaderApp(ttk.Window):
         menu_vidl.add_command(label=self.ui_strings["about"], command=self.show_about)
         menu_vidl.add_separator()
         menu_vidl.add_command(label=self.ui_strings["quit"], command=self.quit)
+        # Conserver le nom de l'app en dur : "ViDL"
         menubar.add_cascade(label="ViDL", menu=menu_vidl)
         menu_options = ttk.Menu(menubar, tearoff=False)
         menu_themes = ttk.Menu(menu_options, tearoff=False)
@@ -705,9 +687,7 @@ class YoutubeDownloaderApp(ttk.Window):
             return
         if not validate_url(url):
             messagebox.showwarning(self.ui_strings["about"],
-                "URL invalide. Veuillez entrer une URL valide (commençant par http:// ou https://) qui correspond à une vidéo YouTube."
-                if self.language=="fr" else
-                "Invalid URL. Please enter a valid YouTube URL (starting with http:// or https://).")
+                self.ui_strings["invalid_url"])
             return
 
         self.video_format_list.clear()
@@ -850,9 +830,7 @@ class YoutubeDownloaderApp(ttk.Window):
             return
         if not validate_url(url):
             messagebox.showwarning(self.ui_strings["about"],
-                "URL invalide. Veuillez entrer une URL valide (commençant par http:// ou https://) qui correspond à une vidéo YouTube."
-                if self.language=="fr" else
-                "Invalid URL. Please enter a valid YouTube URL (starting with http:// or https://).")
+                self.ui_strings["invalid_url"])
             return
 
         chosen_export = self.export_type_var.get()
@@ -1018,9 +996,6 @@ class YoutubeDownloaderApp(ttk.Window):
                 self.status_var.set(f"{self.ui_strings['download_complete']}{file_size_msg}.")
             if self.current_video_info and self.current_video_info.get("title"):
                 entry = self.current_video_info.copy()
-                # Normaliser l'URL pour ne conserver que la partie avant '&'
-                if "url" in entry:
-                    entry["url"] = normalize_url(entry["url"])
                 entry["download_date"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
                 self.add_to_history(entry)
             if self.open_folder_var.get():
@@ -1041,25 +1016,16 @@ class YoutubeDownloaderApp(ttk.Window):
 
     def reencode_mp4(self):
         """
-        Lance le ré‑encodage du fichier MP4 ou, s'il est déjà en cours, l'arrête.
-        Lors du lancement, le bouton change de texte pour afficher "Arrêter" (ou "Stop" en anglais).
+        Lance le ré‑encodage du fichier MP4 et affiche la progression via la barre de progression.
+        Si le ré‑encodage est en cours, le bouton permet de l'arrêter.
         """
         if not self.encoding:
-            # Lancer le ré‑encodage
             if self.downloaded_file_path and os.path.exists(self.downloaded_file_path):
                 self.status_var.set(self.ui_strings["reencode_in_progress"])
                 self.progress_val.set(0)
                 self.encoding = True
                 self.cancel_reencode = False
-                # Changer le texte du bouton pour permettre l'arrêt
                 self.btn_reencode.config(text="Arrêter" if self.language=="fr" else "Stop")
-                def animate_encoding():
-                    while self.encoding:
-                        dots = "." * ((int(time.time() * 2) % 4))
-                        self.status_var.set(self.ui_strings["reencode_in_progress"] + dots)
-                        self.update_idletasks()
-                        time.sleep(0.5)
-                threading.Thread(target=animate_encoding, daemon=True).start()
                 def reencode_task():
                     reencoded_file = self.downloaded_file_path.replace(".mp4", "_reencoded.mp4")
                     cmd = [
@@ -1070,26 +1036,46 @@ class YoutubeDownloaderApp(ttk.Window):
                         reencoded_file
                     ]
                     try:
-                        self.reencode_process = subprocess.Popen(cmd)
+                        self.reencode_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
+                        # Lecture de la sortie de ffmpeg ligne par ligne pour mettre à jour la progression
+                        while True:
+                            line = self.reencode_process.stdout.readline()
+                            if not line:
+                                break
+                            line = line.strip()
+                            # Exemple de ligne : "frame= 5078 fps=197 q=24.0 size=   33024KiB time=00:02:49.36 bitrate=1597.3kbits/s speed=6.58x"
+                            match = re.search(r"time=(\d+):(\d+):(\d+\.\d+)", line)
+                            if match and self.video_duration:
+                                hours = int(match.group(1))
+                                minutes = int(match.group(2))
+                                seconds = float(match.group(3))
+                                current_time = hours * 3600 + minutes * 60 + seconds
+                                progress_percentage = (current_time / self.video_duration) * 100
+                                if progress_percentage > 100:
+                                    progress_percentage = 100
+                                self.after(0, self.progress_val.set, progress_percentage)
+                                self.after(0, self.status_var.set, f"{self.ui_strings['reencode_in_progress']} {progress_percentage:.1f}%")
+                            if self.cancel_reencode:
+                                self.reencode_process.terminate()
+                                break
                         self.reencode_process.wait()
                         if self.cancel_reencode:
                             if os.path.exists(reencoded_file):
                                 os.remove(reencoded_file)
-                            self.status_var.set("Re‑encoding cancelled." if self.language=="en" else "Ré‑encodage annulé.")
+                            self.after(0, self.status_var.set, "Re‑encoding cancelled." if self.language=="en" else "Ré‑encodage annulé.")
                         else:
                             os.replace(reencoded_file, self.downloaded_file_path)
-                            self.status_var.set("MP4 file re‑encoded and optimized." if self.language=="en" else "Fichier MP4 ré‑encodé et optimisé.")
-                            self.progress_val.set(100)
+                            self.after(0, self.status_var.set, "MP4 file re‑encoded and optimized." if self.language=="en" else "Fichier MP4 ré‑encodé et optimisé.")
+                            self.after(0, self.progress_val.set, 100)
                     except Exception as e:
                         print("Error during MP4 re‑encoding:", e)
-                        self.status_var.set("Error during re‑encoding." if self.language=="en" else "Erreur lors du ré‑encodage.")
+                        self.after(0, self.status_var.set, "Error during re‑encoding." if self.language=="en" else "Erreur lors du ré‑encodage.")
                     finally:
                         self.encoding = False
                         self.reencode_process = None
-                        self.btn_reencode.config(text=self.ui_strings["reencode_mp4"])
+                        self.after(0, self.btn_reencode.config, {"text": self.ui_strings["reencode_mp4"]})
                 threading.Thread(target=reencode_task, daemon=True).start()
         else:
-            # Si le ré‑encodage est en cours, l'interrompre
             self.cancel_reencode = True
             if self.reencode_process and self.reencode_process.poll() is None:
                 try:
@@ -1126,9 +1112,6 @@ class YoutubeDownloaderApp(ttk.Window):
             print("Error saving history:", e)
 
     def add_to_history(self, entry):
-        # Normaliser l'URL avant de sauvegarder dans l'historique
-        if "url" in entry:
-            entry["url"] = normalize_url(entry["url"])
         new_date = entry.get("download_date", "")
         new_title = entry.get("title", "")
         new_url = entry.get("url", "")
