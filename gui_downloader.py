@@ -15,7 +15,7 @@ import json
 import time
 import datetime
 import requests
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageDraw, ImageFont
 import tkinter as tk
 import tkinter.font as tkFont
 import tkinter.filedialog as filedialog
@@ -43,7 +43,7 @@ def format_duration(duration):
     Convertit une durée (en secondes) en format mm:ss ou hh:mm:ss.
     """
     try:
-        duration = int(duration)
+        duration = int(float(duration))
     except Exception:
         return str(duration)
     hours = duration // 3600
@@ -58,10 +58,6 @@ def format_duration(duration):
 # UI strings dictionary generator
 # ---------------------------------------------------------
 def get_ui_strings(language):
-    """
-    Returns a dictionary with all UI strings for the specified language.
-    Pour le français (language=="fr"), les termes sont en français.
-    """
     if language == "fr":
         return {
             "title": "ViDL - Téléchargeur Universel",
@@ -71,6 +67,7 @@ def get_ui_strings(language):
             "change_theme": "Changer de thème",
             "download_tab": "Téléchargement",
             "history_tab": "Historique",
+            "conversion_tab": "Conversion",
             "video_analysis": "Analyse de la vidéo",
             "download_labelframe": "Téléchargement",
             "url": "URL :",
@@ -109,7 +106,17 @@ def get_ui_strings(language):
             "english": "Anglais",
             "french": "Français",
             "reencode_in_progress": "Ré‑encodage en cours",
-            "invalid_url": "URL invalide. Veuillez entrer une URL valide (commençant par http:// ou https://)."
+            "invalid_url": "URL invalide. Veuillez entrer une URL valide (commençant par http:// ou https://).",
+            # Onglet Conversion
+            "file_conversion": "Conversion de fichier",
+            "choose_file": "Choisir un fichier…",
+            "select_format": "Format d'export :",
+            "start_conversion": "Démarrer la conversion",
+            "conversion_in_progress": "Conversion en cours...",
+            "conversion_complete": "Conversion terminée",
+            "conversion_failed": "La conversion a échoué",
+            "estimated_size": "Taille estimée :",
+            "advanced_settings": "Paramètres avancés"
         }
     else:
         return {
@@ -120,6 +127,7 @@ def get_ui_strings(language):
             "change_theme": "Change Theme",
             "download_tab": "Download",
             "history_tab": "History",
+            "conversion_tab": "Conversion",
             "video_analysis": "Video Analysis",
             "download_labelframe": "Download",
             "url": "URL:",
@@ -158,20 +166,26 @@ def get_ui_strings(language):
             "english": "English",
             "french": "French",
             "reencode_in_progress": "Re‑encoding",
-            "invalid_url": "Invalid URL. Please enter a valid URL (starting with http:// or https://)."
+            "invalid_url": "Invalid URL. Please enter a valid URL (starting with http:// or https://).",
+            # Conversion tab strings
+            "file_conversion": "File Conversion",
+            "choose_file": "Choose a file...",
+            "select_format": "Output format:",
+            "start_conversion": "Start Conversion",
+            "conversion_in_progress": "Conversion in progress...",
+            "conversion_complete": "Conversion complete",
+            "conversion_failed": "Conversion failed",
+            "estimated_size": "Estimated size:",
+            "advanced_settings": "Advanced Settings"
         }
 
 # ---------------------------------------------------------
 # Small utility class for tooltips
-# (Inspired by https://stackoverflow.com/a/36221216)
 # ---------------------------------------------------------
 class CreateToolTip(object):
-    """
-    Creates a tooltip for a given widget.
-    """
     def __init__(self, widget, text='widget info'):
-        self.waittime = 500     # milliseconds before showing the tooltip
-        self.wraplength = 180   # maximum width of the tooltip in pixels
+        self.waittime = 500
+        self.wraplength = 180
         self.widget = widget
         self.text = text
         self.widget.bind("<Enter>", self.enter)
@@ -202,7 +216,7 @@ class CreateToolTip(object):
         x = x + self.widget.winfo_rootx() + 25
         y = y + cy + self.widget.winfo_rooty() + 20
         self.tw = tk.Toplevel(self.widget)
-        self.tw.wm_overrideredirect(True)  # Remove window border and title bar
+        self.tw.wm_overrideredirect(True)
         self.tw.wm_geometry("+%d+%d" % (x, y))
         label = ttk.Label(self.tw, text=self.text, justify='left',
                           relief='solid', borderwidth=1,
@@ -220,17 +234,6 @@ class CreateToolTip(object):
 # Functions for video analysis and information retrieval
 # ---------------------------------------------------------
 def parse_available_formats(video_url):
-    """
-    Parses available formats and returns:
-      - video_format_list: a list of dicts with keys:
-            "id": format identifier,
-            "width": width in pixels,
-            "height": height in pixels,
-            "fps": frames per second,
-            "tbr": total bitrate in kbps
-      - audio_format_list: [(id, description), ...]
-    Uses yt-dlp with the -F option to list formats and then filters them.
-    """
     try:
         cmd = ["yt-dlp", "-F", video_url]
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -341,9 +344,6 @@ def parse_available_formats(video_url):
     return video_format_list, audio_only_list
 
 def get_thumbnail_url(video_url):
-    """
-    Retrieves the thumbnail URL using yt-dlp.
-    """
     try:
         cmd = ["yt-dlp", "--get-thumbnail", video_url]
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -353,10 +353,6 @@ def get_thumbnail_url(video_url):
         return None
 
 def get_video_info(video_url):
-    """
-    Retrieves video information (title, uploader, upload date, view count, like count,
-    comment count, and duration in seconds) using yt-dlp.
-    """
     try:
         cmd = ["yt-dlp", "-j", video_url]
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -369,7 +365,7 @@ def get_video_info(video_url):
         view_count = data.get("view_count")
         like_count = data.get("like_count")
         comment_count = data.get("comment_count")
-        duration = data.get("duration")  # duration in seconds
+        duration = data.get("duration")
         return title, uploader, upload_date, view_count, like_count, comment_count, duration
     except Exception as e:
         print("Error retrieving video info:", e)
@@ -386,7 +382,6 @@ class YoutubeDownloaderApp(ttk.Window):
         self.ui_strings = get_ui_strings(self.language)
         self.title(self.ui_strings["title"])
         sys.argv[0] = "ViDL"
-        # Élargissement de la fenêtre de 20px (de 800 à 840)
         self.center_window(840, 705)
         try:
             icon_img = tk.PhotoImage(file="/Users/pierredv/Coding/yt-downloader/icon.png")
@@ -396,11 +391,11 @@ class YoutubeDownloaderApp(ttk.Window):
         self.lift()
         self.attributes("-topmost", True)
         self.after(10, lambda: self.attributes("-topmost", False))
-        # --- Transparence de la fenêtre sur MacOS (alpha à 0.98) ---
         if sys.platform == "darwin":
             self.attributes("-alpha", 0.98)
         default_font = tkFont.Font(family="Segoe UI", size=12)
         self.option_add("*Font", default_font)
+
         self.style.configure("Card.TFrame", background=self.style.colors.get("light"), padding=10, relief="flat")
         self.style.configure("Card.TLabel", background=self.style.colors.get("light"))
         self.progress_style_name = "download.Horizontal.TProgressbar"
@@ -410,12 +405,12 @@ class YoutubeDownloaderApp(ttk.Window):
                              troughcolor=self.style.colors.get("dark"),
                              background=self.style.colors.get("info"),
                              borderwidth=0)
-        # Configuration d'un style pour les boutons dans l'historique (aspect plus compact et flat, à la MacOS)
         self.style.configure("History.TButton", padding=2, font=("Helvetica", 10))
-        # Lists to store available formats
-        self.video_format_list = []  # list of dicts for video formats
-        self.audio_format_list = []  # list of tuples for audio formats
-        self.video_format_options = []  # parallel list for combo box selection (for MP4)
+
+        self.video_format_list = []
+        self.audio_format_list = []
+        self.video_format_options = []
+
         self.url_var = ttk.StringVar()
         self.export_type_var = ttk.StringVar(value="mp4")
         self.selected_format = ttk.StringVar()
@@ -427,25 +422,64 @@ class YoutubeDownloaderApp(ttk.Window):
         self.cancelled = False
         self.open_folder_var = ttk.BooleanVar(value=True)
         self.output_dir = os.path.join(os.path.expanduser("~"), "Downloads")
-        self.thumb_image_tk = None
         self.downloaded_file_path = None
         self.download_process = None
-        # Variables pour le ré‑encodage
+
         self.encoding = False
         self.reencode_process = None
         self.cancel_reencode = False
-        placeholder_img = Image.new("RGB", (240, 135), (50, 50, 50))
-        self.placeholder_tk = ImageTk.PhotoImage(placeholder_img)
+
+        self.placeholder_tk = self.create_placeholder_image()
+
         self.url_placeholder = self.ui_strings["url_placeholder"]
         self.url_var.set(self.url_placeholder)
+
         self.current_video_info = {}
-        self.video_duration = None  # duration in seconds
+        self.video_duration = None
+
         self.history = []
         self.history_images = {}
         self.history_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "history.json")
         self.load_history()
+
+        # Variables pour les options d'export et avancées
+        self.video_encoder_var = ttk.StringVar(value="libx264")
+        self.video_resolution_var = ttk.StringVar(value="Original")
+        self.video_bitrate_var = ttk.StringVar(value="1000k")
+        self.video_framerate_var = ttk.StringVar(value="Original")
+        # Nouvelle variable pour le préréglage vidéo
+        self.video_preset_var = ttk.StringVar(value="medium")
+        self.audio_encoder_var = ttk.StringVar(value="aac")
+        self.audio_sample_rate_var = ttk.StringVar(value="44100")
+        self.audio_channels_var = ttk.StringVar(value="Stereo")
+        self.audio_bitrate_var = ttk.StringVar(value="128k")
+        self.optimize_var = tk.BooleanVar(value=False)
+
+        self.conversion_file_path = None
+        self.conversion_duration = None
+        self.conversion_process = None
+        self.conversion_cancelled = False
+        self.conversion_progress_val = tk.DoubleVar(value=0.0)
+        self.conversion_output_file = None
+        self.conversion_cmd = None
+
         self.build_menu()
         self.build_ui()
+
+    def create_placeholder_image(self):
+        width, height = 240, 135
+        placeholder_img = Image.new("RGB", (width, height), (50, 50, 50))
+        draw = ImageDraw.Draw(placeholder_img)
+        triangle_size = 60
+        center_x, center_y = width // 2, height // 2
+        half_size = triangle_size // 2
+        triangle_coords = [
+            (center_x - half_size, center_y - half_size),
+            (center_x - half_size, center_y + half_size),
+            (center_x + half_size, center_y)
+        ]
+        draw.polygon(triangle_coords, fill=(230, 230, 230))
+        return ImageTk.PhotoImage(placeholder_img)
 
     def center_window(self, width, height):
         sw = self.winfo_screenwidth()
@@ -460,8 +494,8 @@ class YoutubeDownloaderApp(ttk.Window):
         menu_vidl.add_command(label=self.ui_strings["about"], command=self.show_about)
         menu_vidl.add_separator()
         menu_vidl.add_command(label=self.ui_strings["quit"], command=self.quit)
-        # Conserver le nom de l'app en dur : "ViDL"
         menubar.add_cascade(label="ViDL", menu=menu_vidl)
+
         menu_options = ttk.Menu(menubar, tearoff=False)
         menu_themes = ttk.Menu(menu_options, tearoff=False)
         theme_list = ["darkly", "flatly", "litera", "journal", "cyborg", "minty"]
@@ -469,10 +503,12 @@ class YoutubeDownloaderApp(ttk.Window):
             menu_themes.add_command(label=theme_name, command=lambda t=theme_name: self.change_theme(t))
         menu_options.add_cascade(label=self.ui_strings["change_theme"], menu=menu_themes)
         menubar.add_cascade(label=self.ui_strings["options"], menu=menu_options)
+
         menu_language = ttk.Menu(menubar, tearoff=False)
         menu_language.add_command(label=self.ui_strings["french"], command=lambda: self.change_language("fr"))
         menu_language.add_command(label=self.ui_strings["english"], command=lambda: self.change_language("en"))
         menubar.add_cascade(label=self.ui_strings["language"], menu=menu_language)
+
         self.config(menu=menubar)
 
     def show_about(self):
@@ -485,7 +521,9 @@ class YoutubeDownloaderApp(ttk.Window):
         self.language = new_lang
         self.ui_strings = get_ui_strings(new_lang)
         self.url_placeholder = self.ui_strings["url_placeholder"]
-        if self.url_var.get() == "" or self.url_var.get() in [get_ui_strings("en")["url_placeholder"], get_ui_strings("fr")["url_placeholder"]]:
+        old_en_placeholder = get_ui_strings("en")["url_placeholder"]
+        old_fr_placeholder = get_ui_strings("fr")["url_placeholder"]
+        if self.url_var.get() == "" or self.url_var.get() in [old_en_placeholder, old_fr_placeholder]:
             self.url_var.set(self.url_placeholder)
         self.update_ui_texts()
 
@@ -494,6 +532,8 @@ class YoutubeDownloaderApp(ttk.Window):
         self.build_menu()
         self.notebook.tab(self.tab_download, text=self.ui_strings["download_tab"])
         self.notebook.tab(self.tab_history, text=self.ui_strings["history_tab"])
+        self.notebook.tab(self.tab_convert, text=self.ui_strings["conversion_tab"])
+
         self.title_label.config(text=self.ui_strings["title"])
         self.frm_analyze.config(text=self.ui_strings["video_analysis"])
         self.frm_download.config(text=self.ui_strings["download_labelframe"])
@@ -510,6 +550,15 @@ class YoutubeDownloaderApp(ttk.Window):
         self.lbl_search.config(text=self.ui_strings["search"])
         self.btn_clear_history.config(text=self.ui_strings["clear_history"])
 
+        self.lbl_conversion_title.config(text=self.ui_strings["file_conversion"])
+        self.btn_choose_file.config(text=self.ui_strings["choose_file"])
+        self.lbl_select_format.config(text=self.ui_strings["select_format"])
+        self.btn_start_conversion.config(text=self.ui_strings["start_conversion"])
+        self.btn_cancel_conversion.config(text=self.ui_strings["cancel"])
+        self.lbl_conversion_status.config(text="")
+        self.lbl_estimated_size.config(text=self.ui_strings["estimated_size"] + " N/A")
+        self.btn_advanced.config(text=self.ui_strings.get("advanced_settings", "Advanced Settings"))
+
     def build_ui(self):
         container = ttk.Frame(self, padding=15)
         container.pack(fill=tk.BOTH, expand=True)
@@ -517,15 +566,24 @@ class YoutubeDownloaderApp(ttk.Window):
         self.notebook.pack(fill=tk.BOTH, expand=True)
         self.tab_download = ttk.Frame(self.notebook)
         self.tab_history = ttk.Frame(self.notebook)
+        self.tab_convert = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_download, text=self.ui_strings["download_tab"])
         self.notebook.add(self.tab_history, text=self.ui_strings["history_tab"])
+        self.notebook.add(self.tab_convert, text=self.ui_strings["conversion_tab"])
         self.build_download_tab()
         self.build_history_tab()
+        self.build_conversion_tab()
 
     def build_download_tab(self):
+        # (Code inchangé pour l'onglet Téléchargement)
         self.tab_download.columnconfigure(0, weight=1)
-        self.title_label = ttk.Label(self.tab_download, text=self.ui_strings["title"],
-                                     font=("Helvetica", 24, "bold"), anchor="center", justify="center")
+        self.title_label = ttk.Label(
+            self.tab_download,
+            text=self.ui_strings["title"],
+            font=("Helvetica", 24, "bold"),
+            anchor="center",
+            justify="center"
+        )
         self.title_label.grid(row=0, column=0, pady=(10,10), sticky="ew")
         self.frm_analyze = ttk.Labelframe(self.tab_download, text=self.ui_strings["video_analysis"], padding=15)
         self.frm_analyze.grid(row=1, column=0, padx=10, pady=10, sticky="ew")
@@ -547,82 +605,110 @@ class YoutubeDownloaderApp(ttk.Window):
         frm_status.pack(fill=tk.X, padx=5, pady=(0,5))
         self.lbl_analyze_info = ttk.Label(frm_status, text="", foreground="#aaa")
         self.lbl_analyze_info.pack(side=tk.LEFT, padx=5, pady=5)
-        self.analyze_progress = ttk.Progressbar(frm_status, style="Analyze.Horizontal.TProgressbar",
-                                                orient=tk.HORIZONTAL, mode='indeterminate')
+        self.analyze_progress = ttk.Progressbar(
+            frm_status,
+            style="Analyze.Horizontal.TProgressbar",
+            orient=tk.HORIZONTAL,
+            mode='indeterminate'
+        )
         self.analyze_progress.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, pady=5)
         self.analyze_progress.pack_forget()
-        frm_thumbinfo = ttk.Frame(self.frm_analyze)
-        frm_thumbinfo.pack(fill=tk.X, pady=10)
-        card_frame = ttk.Frame(frm_thumbinfo, style="Card.TFrame")
-        card_frame.pack(fill=tk.X, padx=5, pady=5)
-        # Affichage de la miniature et des infos associées avec un espacement resserré
-        self.lbl_thumbnail = ttk.Label(card_frame, image=self.placeholder_tk)
+        self.frm_thumbinfo = ttk.Frame(self.frm_analyze)
+        self.frm_thumbinfo.pack(fill=tk.X, pady=10)
+        self.card_frame = ttk.Frame(self.frm_thumbinfo, style="Card.TFrame")
+        self.card_frame.pack(fill=tk.X, padx=5, pady=5)
+        self.lbl_thumbnail = ttk.Label(self.card_frame, image=self.placeholder_tk)
         self.lbl_thumbnail.grid(row=0, column=0, rowspan=7, padx=10, pady=5)
-        self.lbl_video_title = ttk.Label(card_frame, text="Titre :", style="Card.TLabel", font=("Helvetica", 16, "bold"))
-        self.lbl_video_title.grid(row=0, column=1, sticky="w", padx=5, pady=(3,1))
-        self.lbl_video_channel = ttk.Label(card_frame, text="Chaîne :", style="Card.TLabel", font=("Helvetica", 12))
-        self.lbl_video_channel.grid(row=1, column=1, sticky="w", padx=5, pady=1)
-        self.lbl_video_date = ttk.Label(card_frame, text="Date :", style="Card.TLabel", font=("Helvetica", 12))
-        self.lbl_video_date.grid(row=2, column=1, sticky="w", padx=5, pady=1)
-        # Utilisation de la fonction format_duration pour afficher la durée au format mm:ss ou hh:mm:ss
-        self.lbl_video_duration = ttk.Label(card_frame, text="Durée :", style="Card.TLabel", font=("Helvetica", 12))
-        self.lbl_video_duration.grid(row=3, column=1, sticky="w", padx=5, pady=1)
-        self.lbl_video_views = ttk.Label(card_frame, text="Vues :", style="Card.TLabel", font=("Helvetica", 12))
-        self.lbl_video_views.grid(row=4, column=1, sticky="w", padx=5, pady=1)
-        self.lbl_video_likes = ttk.Label(card_frame, text="Likes :", style="Card.TLabel", font=("Helvetica", 12))
-        self.lbl_video_likes.grid(row=5, column=1, sticky="w", padx=5, pady=1)
-        self.lbl_video_comments = ttk.Label(card_frame, text="Commentaires :", style="Card.TLabel", font=("Helvetica", 12))
-        self.lbl_video_comments.grid(row=6, column=1, sticky="w", padx=5, pady=1)
-        card_frame.grid_columnconfigure(1, weight=1)
+        # Modification : le clic sur l'image de la vidéo se gère désormais en simple clic
+        self.lbl_thumbnail.bind("<Button-1>", self.on_thumbnail_click)
+        # Informations sur la vidéo
+        self.lbl_video_title = ttk.Label(self.card_frame, style="Card.TLabel", font=("Helvetica", 16, "bold"))
+        self.lbl_video_channel = ttk.Label(self.card_frame, style="Card.TLabel", font=("Helvetica", 12))
+        self.lbl_video_date = ttk.Label(self.card_frame, style="Card.TLabel", font=("Helvetica", 12))
+        self.lbl_video_duration = ttk.Label(self.card_frame, style="Card.TLabel", font=("Helvetica", 12))
+        self.lbl_video_views = ttk.Label(self.card_frame, style="Card.TLabel", font=("Helvetica", 12))
+        self.lbl_video_likes = ttk.Label(self.card_frame, style="Card.TLabel", font=("Helvetica", 12))
+        self.lbl_video_comments = ttk.Label(self.card_frame, style="Card.TLabel", font=("Helvetica", 12))
         self.frm_download = ttk.Labelframe(self.tab_download, text=self.ui_strings["download_labelframe"], padding=15)
         self.frm_download.grid(row=2, column=0, padx=10, pady=10, sticky="ew")
         for col_index in range(4):
             self.frm_download.columnconfigure(col_index, weight=1)
-        self.radio_mp4 = ttk.Radiobutton(self.frm_download, text=self.ui_strings["export_mp4"],
-                                         variable=self.export_type_var, value="mp4", command=self.update_format_list)
+        self.radio_mp4 = ttk.Radiobutton(
+            self.frm_download,
+            text=self.ui_strings["export_mp4"],
+            variable=self.export_type_var,
+            value="mp4",
+            command=self.update_format_list
+        )
         self.radio_mp4.grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
-        self.radio_mp3 = ttk.Radiobutton(self.frm_download, text=self.ui_strings["export_mp3"],
-                                         variable=self.export_type_var, value="mp3", command=self.update_format_list)
+        self.radio_mp3 = ttk.Radiobutton(
+            self.frm_download,
+            text=self.ui_strings["export_mp3"],
+            variable=self.export_type_var,
+            value="mp3",
+            command=self.update_format_list
+        )
         self.radio_mp3.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
         self.lbl_format = ttk.Label(self.frm_download, text=self.ui_strings["source_format"])
         self.lbl_format.grid(row=0, column=2, sticky=tk.E, padx=5, pady=5)
-        self.combo_format = ttk.Combobox(self.frm_download, textvariable=self.selected_format,
-                                         width=40, state="readonly")
+        self.combo_format = ttk.Combobox(self.frm_download, textvariable=self.selected_format, width=40, state="readonly")
         self.combo_format.grid(row=0, column=3, sticky=(tk.W, tk.E), padx=5, pady=5)
-        # Pour l'export MP4, on affiche : résolution, fps, bitrate, format et taille estimée (si durée connue)
-        # Exemple : "1920x1080, 60fps, 4500 kbps, MP4, ~120.3 MB"
-        self.btn_choose_folder = ttk.Button(self.frm_download, text=self.ui_strings["choose_folder"],
-                                            bootstyle="secondary", command=self.choose_download_folder)
+        self.btn_choose_folder = ttk.Button(
+            self.frm_download,
+            text=self.ui_strings["choose_folder"],
+            bootstyle="secondary",
+            command=self.choose_download_folder
+        )
         self.btn_choose_folder.grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
         CreateToolTip(self.btn_choose_folder, self.ui_strings["choose_folder_tooltip"])
         btn_frame = ttk.Frame(self.frm_download)
         btn_frame.grid(row=1, column=2, columnspan=2, sticky=tk.E, padx=5, pady=5)
-        self.btn_cancel = ttk.Button(btn_frame, text=self.ui_strings["cancel"],
-                                     bootstyle="danger-outline", command=self.cancel_download, state="disabled")
+        self.btn_cancel = ttk.Button(
+            btn_frame,
+            text=self.ui_strings["cancel"],
+            bootstyle="danger-outline",
+            command=self.cancel_download,
+            state="disabled"
+        )
         self.btn_cancel.pack(side=tk.LEFT, padx=(0,5))
         CreateToolTip(self.btn_cancel, self.ui_strings["cancel_tooltip"])
-        self.btn_download = ttk.Button(btn_frame, text=self.ui_strings["download_button"],
-                                       bootstyle="success", command=self.download_video)
+        self.btn_download = ttk.Button(
+            btn_frame,
+            text=self.ui_strings["download_button"],
+            bootstyle="success",
+            command=self.download_video
+        )
         self.btn_download.pack(side=tk.LEFT)
         CreateToolTip(self.btn_download, self.ui_strings["download_button_tooltip"])
-        self.chk_open_folder = ttk.Checkbutton(self.frm_download, text=self.ui_strings["open_folder_after_download"],
-                                                variable=self.open_folder_var, bootstyle="round-toggle")
+        self.chk_open_folder = ttk.Checkbutton(
+            self.frm_download,
+            text=self.ui_strings["open_folder_after_download"],
+            variable=self.open_folder_var,
+            bootstyle="round-toggle"
+        )
         self.chk_open_folder.grid(row=2, column=0, columnspan=4, sticky=tk.W, padx=5, pady=5)
-        self.progress_bar = ttk.Progressbar(self.frm_download, style=self.progress_style_name,
-                                            orient=tk.HORIZONTAL, mode='determinate',
-                                            variable=self.progress_val)
+        self.progress_bar = ttk.Progressbar(
+            self.frm_download,
+            style=self.progress_style_name,
+            orient=tk.HORIZONTAL,
+            mode='determinate',
+            variable=self.progress_val
+        )
         self.progress_bar.grid(row=3, column=0, columnspan=4, pady=10, sticky="we")
         status_frame = ttk.Frame(self.frm_download)
         status_frame.grid(row=4, column=0, columnspan=4, sticky="we", pady=5)
         self.lbl_status = ttk.Label(status_frame, textvariable=self.status_var, foreground="#aaa")
         self.lbl_status.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        # Le même bouton est utilisé pour lancer le ré‑encodage et, pendant l'opération, pour l'arrêter.
-        self.btn_reencode = ttk.Button(status_frame, text=self.ui_strings["reencode_mp4"],
-                                       bootstyle="primary", command=self.reencode_mp4)
+        self.btn_reencode = ttk.Button(
+            status_frame,
+            text=self.ui_strings["reencode_mp4"],
+            bootstyle="primary",
+            command=self.reencode_mp4
+        )
         self.btn_reencode.pack_forget()
 
     def build_history_tab(self):
-        """Builds the history tab where downloaded videos are listed in a scrollable container."""
+        # (Code inchangé pour l'onglet Historique)
         search_frame = ttk.Frame(self.tab_history)
         search_frame.pack(fill=tk.X, padx=5, pady=5)
         self.lbl_search = ttk.Label(search_frame, text=self.ui_strings["search"])
@@ -651,10 +737,159 @@ class YoutubeDownloaderApp(ttk.Window):
                 canvas.yview_scroll(-1 * int(event.delta / 120), "units")
         canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _on_mousewheel))
         canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
-        self.btn_clear_history = ttk.Button(self.tab_history, text=self.ui_strings["clear_history"],
-                                            bootstyle="danger", command=self.clear_history)
+        self.btn_clear_history = ttk.Button(
+            self.tab_history,
+            text=self.ui_strings["clear_history"],
+            bootstyle="danger",
+            command=self.clear_history
+        )
         self.btn_clear_history.pack(pady=5)
         self.update_history_view()
+
+    def build_conversion_tab(self):
+        """Construction de l'onglet Conversion"""
+        self.tab_convert.columnconfigure(0, weight=1)
+        self.tab_convert.rowconfigure(0, weight=1)
+        self.lbl_conversion_title = ttk.Label(
+            self.tab_convert,
+            text=self.ui_strings["file_conversion"],
+            font=("Helvetica", 20, "bold")
+        )
+        self.lbl_conversion_title.pack(pady=(10,10))
+        conversion_frame = ttk.Frame(self.tab_convert, padding=10)
+        conversion_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        conversion_frame.columnconfigure(0, weight=1)
+        conversion_frame.rowconfigure(0, weight=1)
+        # --- Section 1 : Import du fichier ---
+        file_import_frame = ttk.Labelframe(
+            conversion_frame,
+            text="Fichier à convertir" if self.language=="fr" else "File to convert",
+            padding=10
+        )
+        file_import_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        file_import_frame.columnconfigure(1, weight=1)
+        self.btn_choose_file = ttk.Button(
+            file_import_frame,
+            text=self.ui_strings["choose_file"],
+            bootstyle="secondary",
+            command=self.choose_conversion_file
+        )
+        self.btn_choose_file.grid(row=0, column=0, sticky="w", padx=(0,10), pady=5)
+        CreateToolTip(self.btn_choose_file, self.ui_strings["choose_file"])
+        self.lbl_selected_file = ttk.Label(
+            file_import_frame,
+            text="",
+            foreground=self.style.colors.get("secondary")
+        )
+        self.lbl_selected_file.grid(row=0, column=1, sticky="w", pady=5)
+        info_frame = ttk.Frame(file_import_frame)
+        info_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=5)
+        # Affichage de la miniature avec lecture (modification : on utilise un simple clic)
+        self.lbl_conv_thumbnail = ttk.Label(info_frame, image=self.placeholder_tk)
+        self.lbl_conv_thumbnail.grid(row=0, column=0, rowspan=5, padx=5, pady=5)
+        self.lbl_conv_thumbnail.bind("<Button-1>", self.on_thumbnail_click)
+        # Informations sur le fichier (5 infos)
+        self.lbl_conv_file_name = ttk.Label(info_frame, text="Nom du fichier : N/A")
+        self.lbl_conv_file_name.grid(row=0, column=1, sticky="w", padx=5)
+        self.lbl_conv_duration = ttk.Label(info_frame, text="Durée : N/A")
+        self.lbl_conv_duration.grid(row=1, column=1, sticky="w", padx=5)
+        self.lbl_conv_codec = ttk.Label(info_frame, text="Format : N/A")
+        self.lbl_conv_codec.grid(row=2, column=1, sticky="w", padx=5)
+        self.lbl_conv_resolution = ttk.Label(info_frame, text="Résolution : N/A")
+        self.lbl_conv_resolution.grid(row=3, column=1, sticky="w", padx=5)
+        self.lbl_conv_format = ttk.Label(info_frame, text="Débit global : N/A")
+        self.lbl_conv_format.grid(row=4, column=1, sticky="w", padx=5)
+        # Masquer ces infos tant qu'on ne les a pas obtenues
+        self.lbl_conv_file_name.grid_remove()
+        self.lbl_conv_duration.grid_remove()
+        self.lbl_conv_codec.grid_remove()
+        self.lbl_conv_resolution.grid_remove()
+        self.lbl_conv_format.grid_remove()
+
+        # --- Section 2 : Options d'export ---
+        export_frame = ttk.Labelframe(
+            conversion_frame,
+            text="Options d'export" if self.language=="fr" else "Export Options",
+            padding=10
+        )
+        export_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
+        # Création de deux frames pour disposer les options en colonnes
+        left_frame = ttk.Frame(export_frame)
+        left_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        right_frame = ttk.Frame(export_frame)
+        right_frame.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
+        export_frame.columnconfigure(0, weight=1)
+        export_frame.columnconfigure(1, weight=1)
+
+        # Gauche : Format d'export et Qualité
+        self.lbl_select_format = ttk.Label(left_frame, text=self.ui_strings["select_format"])
+        self.lbl_select_format.grid(row=0, column=0, sticky="w", padx=(0,10), pady=5)
+        self.conversion_format_var = ttk.StringVar(value="mp4")
+        self.combo_conversion_format = ttk.Combobox(left_frame, textvariable=self.conversion_format_var, state="readonly",
+                                                      values=["mp4", "mp3", "mkv", "avi", "mov", "flv", "wmv", "ogg", "wav"])
+        self.combo_conversion_format.grid(row=0, column=1, sticky="w", pady=5)
+        self.lbl_quality = ttk.Label(left_frame, text="Qualité:" if self.language=="fr" else "Quality:")
+        self.lbl_quality.grid(row=1, column=0, sticky="w", padx=(0,10), pady=5)
+        self.quality_var = ttk.StringVar(value="Standard")
+        self.combo_quality = ttk.Combobox(left_frame, textvariable=self.quality_var, state="readonly",
+                                          values=["Low", "Standard", "High", "Very High"])
+        self.combo_quality.grid(row=1, column=1, sticky="w", pady=5)
+
+        # Droite : Résolution et Échantillonnage
+        lbl_resolution = ttk.Label(right_frame, text="Résolution:" if self.language=="fr" else "Resolution:")
+        lbl_resolution.grid(row=0, column=0, sticky="w", padx=(0,10), pady=5)
+        self.combo_resolution = ttk.Combobox(right_frame, textvariable=self.video_resolution_var, state="readonly",
+                                             values=["Original", "144p", "240p", "360p", "480p", "720p", "1080p", "1440p", "2160p"])
+        self.combo_resolution.grid(row=0, column=1, sticky="w", pady=5)
+        lbl_sample_rate = ttk.Label(right_frame, text="Échantillonnage:" if self.language=="fr" else "Sample Rate:")
+        lbl_sample_rate.grid(row=1, column=0, sticky="w", padx=(0,10), pady=5)
+        self.combo_sample_rate = ttk.Combobox(right_frame, textvariable=self.audio_sample_rate_var, state="readonly",
+                                              values=["8000", "11025", "16000", "22050", "32000", "44100", "48000", "88200", "96000"])
+        self.combo_sample_rate.grid(row=1, column=1, sticky="w", pady=5)
+
+        # Ligne du bas : Bouton "Paramètres avancés" (gauche) et case "Optimiser pour le streaming" (droite)
+        bottom_frame = ttk.Frame(export_frame)
+        bottom_frame.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
+        bottom_frame.columnconfigure(0, weight=1)
+        bottom_frame.columnconfigure(1, weight=1)
+        self.btn_advanced = ttk.Button(bottom_frame, text=self.ui_strings.get("advanced_settings", "Advanced Settings"),
+                                       command=self.open_advanced_settings)
+        self.btn_advanced.grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        self.chk_optimize = ttk.Checkbutton(bottom_frame,
+                                            text="Optimiser pour le streaming" if self.language=="fr" else "Optimize for streaming",
+                                            variable=self.optimize_var)
+        self.chk_optimize.grid(row=0, column=1, sticky="e", padx=5, pady=5)
+
+        # Progression de la conversion
+        progress_frame = ttk.Frame(export_frame)
+        progress_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10,0))
+        self.progress_bar_conversion = ttk.Progressbar(progress_frame,
+                                                       style=self.progress_style_name,
+                                                       orient=tk.HORIZONTAL,
+                                                       mode='determinate',
+                                                       variable=self.conversion_progress_val)
+        self.progress_bar_conversion.grid(row=0, column=0, sticky="ew", padx=5, pady=(0,5))
+        progress_frame.columnconfigure(0, weight=1)
+        self.lbl_conversion_status = ttk.Label(progress_frame, text="", foreground=self.style.colors.get("info"))
+        self.lbl_conversion_status.grid(row=1, column=0, sticky="w", padx=5)
+        self.lbl_estimated_size = ttk.Label(progress_frame, text=self.ui_strings["estimated_size"] + " N/A", foreground=self.style.colors.get("info"))
+        self.lbl_estimated_size.grid(row=2, column=0, sticky="w", padx=5)
+        # Boutons de contrôle de conversion (inversion de l'ordre)
+        control_frame = ttk.Frame(export_frame)
+        control_frame.grid(row=3, column=0, columnspan=2, sticky="e", pady=5)
+        # D'abord le bouton "Démarrer la conversion"
+        self.btn_start_conversion = ttk.Button(control_frame,
+                                                 text=self.ui_strings["start_conversion"],
+                                                 bootstyle="success",
+                                                 command=self.start_conversion)
+        self.btn_start_conversion.pack(side=tk.RIGHT, padx=5, pady=5)
+        # Puis le bouton "Annuler"
+        self.btn_cancel_conversion = ttk.Button(control_frame,
+                                                  text=self.ui_strings["cancel"],
+                                                  bootstyle="danger-outline",
+                                                  command=self.cancel_conversion,
+                                                  state="disabled")
+        self.btn_cancel_conversion.pack(side=tk.RIGHT, padx=5, pady=5)
 
     def clear_url_placeholder(self, event):
         if self.url_var.get() == self.url_placeholder:
@@ -682,27 +917,30 @@ class YoutubeDownloaderApp(ttk.Window):
     def analyze_video(self):
         url = self.url_var.get().strip()
         if not url or url == self.url_placeholder:
-            messagebox.showwarning(self.ui_strings["about"],
-                                   "Veuillez saisir une URL." if self.language=="fr" else "Please enter a URL.")
+            messagebox.showwarning(
+                self.ui_strings["about"],
+                "Veuillez saisir une URL." if self.language=="fr" else "Please enter a URL."
+            )
             return
         if not validate_url(url):
-            messagebox.showwarning(self.ui_strings["about"],
-                self.ui_strings["invalid_url"])
+            messagebox.showwarning(self.ui_strings["about"], self.ui_strings["invalid_url"])
             return
 
         self.video_format_list.clear()
         self.audio_format_list.clear()
         self.selected_format.set('')
         self.lbl_analyze_info.config(text=self.ui_strings["analyzing"])
-        self.lbl_thumbnail.config(image=self.placeholder_tk)
-        self.lbl_video_title.config(text="Titre :" if self.language=="fr" else "Title:")
-        self.lbl_video_channel.config(text="Chaîne :" if self.language=="fr" else "Channel:")
-        self.lbl_video_date.config(text="Date :" if self.language=="fr" else "Date:")
-        # Affichage de la durée en format mm:ss ou hh:mm:ss
-        self.lbl_video_duration.config(text="Durée :" if self.language=="fr" else "Duration:")
-        self.lbl_video_views.config(text="Vues :" if self.language=="fr" else "Views:")
-        self.lbl_video_likes.config(text="Likes :" if self.language=="fr" else "Likes:")
-        self.lbl_video_comments.config(text="Commentaires :" if self.language=="fr" else "Comments:")
+        self.lbl_thumbnail.config(image=self.placeholder_tk, text='')
+        for lbl in [
+            self.lbl_video_title,
+            self.lbl_video_channel,
+            self.lbl_video_date,
+            self.lbl_video_duration,
+            self.lbl_video_views,
+            self.lbl_video_likes,
+            self.lbl_video_comments
+        ]:
+            lbl.grid_forget()
         self.analyze_progress.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, pady=5)
         self.analyze_progress.start(10)
         threading.Thread(target=self.run_analysis_thread, args=(url,), daemon=True).start()
@@ -724,50 +962,87 @@ class YoutubeDownloaderApp(ttk.Window):
                 thumb_image = ImageTk.PhotoImage(pil_img)
             except:
                 pass
+
         def on_finish():
             self.analyze_progress.stop()
             self.analyze_progress.pack_forget()
             if not v_list and not a_list:
-                messagebox.showerror("Error" if self.language=="en" else "Erreur", self.ui_strings["no_format_found"])
+                messagebox.showerror(
+                    "Error" if self.language=="en" else "Erreur",
+                    self.ui_strings["no_format_found"]
+                )
                 self.lbl_analyze_info.config(text=self.ui_strings["no_format_found"])
                 return
+
             self.video_format_list = v_list
             self.audio_format_list = a_list
             self.update_format_list()
-            info_txt = f"{len(v_list)} formats vidéo, {len(a_list)} formats audio." if self.language=="fr" else f"{len(v_list)} video formats, {len(a_list)} audio formats."
+
+            info_txt = (
+                f"{len(v_list)} formats vidéo, {len(a_list)} formats audio."
+                if self.language=="fr"
+                else f"{len(v_list)} video formats, {len(a_list)} audio formats."
+            )
             self.lbl_analyze_info.config(text=info_txt)
+
             if thumb_image:
-                self.thumb_image_tk = thumb_image
-                self.lbl_thumbnail.config(image=self.thumb_image_tk, text='')
+                self.lbl_thumbnail.config(image=thumb_image, text='')
+                self.lbl_thumbnail.image = thumb_image
             else:
-                self.lbl_thumbnail.config(image='', text="Pas de miniature" if self.language=="fr" else "No thumbnail")
+                self.lbl_thumbnail.config(image=self.placeholder_tk, text='')
+
+            row_index = 0
             if video_title:
-                self.lbl_video_title.config(text=f"{'Titre' if self.language=='fr' else 'Title'}: {video_title}")
+                self.lbl_video_title.config(
+                    text=f"{'Titre' if self.language=='fr' else 'Title'}: {video_title}"
+                )
+                self.lbl_video_title.grid(row=row_index, column=1, sticky="w", padx=5, pady=(3,1))
+                row_index += 1
             if video_channel:
-                self.lbl_video_channel.config(text=f"{'Chaîne' if self.language=='fr' else 'Channel'}: {video_channel}")
+                self.lbl_video_channel.config(
+                    text=f"{'Chaîne' if self.language=='fr' else 'Channel'}: {video_channel}"
+                )
+                self.lbl_video_channel.grid(row=row_index, column=1, sticky="w", padx=5, pady=1)
+                row_index += 1
             if video_pubdate:
-                self.lbl_video_date.config(text=f"{'Date' if self.language=='fr' else 'Date'}: {video_pubdate}")
+                self.lbl_video_date.config(
+                    text=f"{'Date' if self.language=='fr' else 'Date'}: {video_pubdate}"
+                )
+                self.lbl_video_date.grid(row=row_index, column=1, sticky="w", padx=5, pady=1)
+                row_index += 1
             if duration is not None:
-                # Affichage de la durée au format mm:ss ou hh:mm:ss
-                self.lbl_video_duration.config(text=f"{'Durée' if self.language=='fr' else 'Duration'}: {format_duration(duration)}")
+                self.lbl_video_duration.config(
+                    text=f"{'Durée' if self.language=='fr' else 'Duration'}: {format_duration(duration)}"
+                )
+                self.lbl_video_duration.grid(row=row_index, column=1, sticky="w", padx=5, pady=1)
+                row_index += 1
             if view_count is not None:
-                self.lbl_video_views.config(text=f"{'Vues' if self.language=='fr' else 'Views'}: {view_count:,}")
+                self.lbl_video_views.config(
+                    text=f"{'Vues' if self.language=='fr' else 'Views'}: {view_count:,}"
+                )
+                self.lbl_video_views.grid(row=row_index, column=1, sticky="w", padx=5, pady=1)
+                row_index += 1
             if like_count is not None:
-                self.lbl_video_likes.config(text=f"{'Likes' if self.language=='fr' else 'Likes'}: {like_count:,}")
+                self.lbl_video_likes.config(
+                    text=f"{'Likes' if self.language=='fr' else 'Likes'}: {like_count:,}"
+                )
+                self.lbl_video_likes.grid(row=row_index, column=1, sticky="w", padx=5, pady=1)
+                row_index += 1
             if comment_count is not None:
-                self.lbl_video_comments.config(text=f"{'Commentaires' if self.language=='fr' else 'Comments'}: {comment_count:,}")
+                self.lbl_video_comments.config(
+                    text=f"{'Commentaires' if self.language=='fr' else 'Comments'}: {comment_count:,}"
+                )
+                self.lbl_video_comments.grid(row=row_index, column=1, sticky="w", padx=5, pady=1)
+                row_index += 1
             self.current_video_info = {
                 "title": video_title,
                 "url": url,
                 "thumbnail_url": thumb_url
             }
+
         self.after(0, on_finish)
 
     def update_format_list(self):
-        """
-        For export MP4: rebuilds the display strings using resolution, fps, bitrate, file format and,
-        if available, the estimated file size.
-        """
         chosen_export = self.export_type_var.get()
         if chosen_export == "mp4":
             options = []
@@ -783,7 +1058,7 @@ class YoutubeDownloaderApp(ttk.Window):
                 file_format = "MP4"
                 display = f"{res_str}, {fps_str}, {bitrate_str}, {file_format}"
                 if self.video_duration:
-                    est_size = (tbr * self.video_duration) / 8192  # MB
+                    est_size = (tbr * self.video_duration) / 8192
                     display += f", ~{est_size:.1f} MB"
                 options.append(fmt)
                 display_values.append(display)
@@ -791,78 +1066,62 @@ class YoutubeDownloaderApp(ttk.Window):
             self.combo_format['values'] = display_values
             if display_values:
                 self.combo_format.current(0)
-            # Attacher (ou créer) un tooltip dynamique sur le combobox
-            if not hasattr(self, "combo_tooltip"):
-                self.combo_tooltip = CreateToolTip(self.combo_format, text="")
-            self.combo_format.bind("<<ComboboxSelected>>", self.update_combo_tooltip)
-            self.update_combo_tooltip()
         else:
             combo_values = [item[1] for item in self.audio_format_list]
             self.combo_format['values'] = combo_values
             if combo_values:
                 self.combo_format.current(0)
 
-    def update_combo_tooltip(self, event=None):
-        """Updates the tooltip text for the combobox based on the selected video format."""
-        idx = self.combo_format.current()
-        if idx < 0:
-            text = ""
-        else:
-            fmt = self.video_format_options[idx]
-            w = fmt["width"]
-            h = fmt["height"]
-            fps = fmt["fps"]
-            tbr = fmt["tbr"]
-            text = (f"Résolution : {w}x{h}\n"
-                    f"FPS : {fps}\n"
-                    f"Bitrate : {tbr} kbps\n"
-                    f"Format : MP4")
-            if self.video_duration:
-                est_size = (tbr * self.video_duration) / 8192
-                text += f"\nDurée : {self.video_duration} sec\nEst. taille : ~{est_size:.1f} MB\n(Cette taille est approximative)"
-        self.combo_tooltip.text = text
-
     def download_video(self):
         url = self.url_var.get().strip()
         if not url or url == self.url_placeholder:
-            messagebox.showwarning("Warning" if self.language=="en" else "Attention", 
-                                   "Missing URL." if self.language=="en" else "URL manquante.")
+            messagebox.showwarning(
+                "Warning" if self.language=="en" else "Attention",
+                "Missing URL." if self.language=="en" else "URL manquante."
+            )
             return
         if not validate_url(url):
-            messagebox.showwarning(self.ui_strings["about"],
-                self.ui_strings["invalid_url"])
+            messagebox.showwarning(self.ui_strings["about"], self.ui_strings["invalid_url"])
             return
 
         chosen_export = self.export_type_var.get()
         if chosen_export == "mp4":
             if not self.video_format_list:
-                messagebox.showwarning("Warning" if self.language=="en" else "Attention", 
-                                       "Please analyze the video first (or no format found)." if self.language=="en" else
-                                       "Veuillez analyser la vidéo d'abord (ou aucun format trouvé).")
+                messagebox.showwarning(
+                    "Warning" if self.language=="en" else "Attention",
+                    "Please analyze the video first (or no format found)." if self.language=="en" else
+                    "Veuillez analyser la vidéo d'abord (ou aucun format trouvé)."
+                )
                 return
             idx = self.combo_format.current()
             if idx < 0:
-                messagebox.showwarning("Warning" if self.language=="en" else "Attention", 
-                                       "No format selected." if self.language=="en" else "Aucun format sélectionné.")
+                messagebox.showwarning(
+                    "Warning" if self.language=="en" else "Attention",
+                    "No format selected." if self.language=="en" else "Aucun format sélectionné."
+                )
                 return
             combo_id = self.video_format_options[idx]["id"]
         else:
             if not self.audio_format_list:
-                messagebox.showwarning("Warning" if self.language=="en" else "Attention", 
-                                       "Please analyze the video first (or no format found)." if self.language=="en" else
-                                       "Veuillez analyser la vidéo d'abord (ou aucun format trouvé).")
+                messagebox.showwarning(
+                    "Warning" if self.language=="en" else "Attention",
+                    "Please analyze the video first (or no format found)." if self.language=="en" else
+                    "Veuillez analyser la vidéo d'abord (ou aucun format trouvé)."
+                )
                 return
             current_val = self.selected_format.get().strip()
             if not current_val:
-                messagebox.showwarning("Warning" if self.language=="en" else "Attention", 
-                                       "No format selected." if self.language=="en" else "Aucun format sélectionné.")
+                messagebox.showwarning(
+                    "Warning" if self.language=="en" else "Attention",
+                    "No format selected." if self.language=="en" else "Aucun format sélectionné."
+                )
                 return
             combo_id = current_val.split("|")[0].strip()
 
         self.downloaded_file_path = None
-        # Génération d'un nom de fichier unique en utilisant le titre (si disponible) et en normalisant l'URL
-        if "title" in self.current_video_info and self.current_video_info["title"]:
-            base = sanitize_filename(self.current_video_info["title"])
+        title_in_info = self.current_video_info.get("title", "")
+        if title_in_info:
+            base = sanitize_filename(title_in_info)
         else:
             base = "video"
         ext = "mp4" if chosen_export == "mp4" else "mp3"
@@ -892,6 +1151,7 @@ class YoutubeDownloaderApp(ttk.Window):
                 "-o", output_template,
                 url
             ]
+
         self.progress_val.set(0.0)
         self.download_target = 0.0
         self.status_var.set(self.ui_strings["download_in_progress"] + " 0.0%")
@@ -899,6 +1159,7 @@ class YoutubeDownloaderApp(ttk.Window):
         self.btn_reencode.pack_forget()
         self.cancelled = False
         self.btn_cancel.config(state="normal")
+
         threading.Thread(target=self.run_download_thread, args=(cmd,), daemon=True).start()
 
     def run_download_thread(self, cmd):
@@ -1008,17 +1269,12 @@ class YoutubeDownloaderApp(ttk.Window):
                 self.cancelled = False
             else:
                 self.status_var.set(self.ui_strings["download_failed"])
-                messagebox.showerror("Error" if self.language=="en" else "Erreur", self.ui_strings["download_failed"])
-
-    def update_encoding_progress(self, percent):
-        self.progress_val.set(percent)
-        self.update_idletasks()
+                messagebox.showerror(
+                    "Error" if self.language=="en" else "Erreur",
+                    self.ui_strings["download_failed"]
+                )
 
     def reencode_mp4(self):
-        """
-        Lance le ré‑encodage du fichier MP4 et affiche la progression via la barre de progression.
-        Si le ré‑encodage est en cours, le bouton permet de l'arrêter.
-        """
         if not self.encoding:
             if self.downloaded_file_path and os.path.exists(self.downloaded_file_path):
                 self.status_var.set(self.ui_strings["reencode_in_progress"])
@@ -1037,13 +1293,11 @@ class YoutubeDownloaderApp(ttk.Window):
                     ]
                     try:
                         self.reencode_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
-                        # Lecture de la sortie de ffmpeg ligne par ligne pour mettre à jour la progression
                         while True:
                             line = self.reencode_process.stdout.readline()
                             if not line:
                                 break
                             line = line.strip()
-                            # Exemple de ligne : "frame= 5078 fps=197 q=24.0 size=   33024KiB time=00:02:49.36 bitrate=1597.3kbits/s speed=6.58x"
                             match = re.search(r"time=(\d+):(\d+):(\d+\.\d+)", line)
                             if match and self.video_duration:
                                 hours = int(match.group(1))
@@ -1054,7 +1308,8 @@ class YoutubeDownloaderApp(ttk.Window):
                                 if progress_percentage > 100:
                                     progress_percentage = 100
                                 self.after(0, self.progress_val.set, progress_percentage)
-                                self.after(0, self.status_var.set, f"{self.ui_strings['reencode_in_progress']} {progress_percentage:.1f}%")
+                                self.after(0, self.status_var.set,
+                                           f"{self.ui_strings['reencode_in_progress']} {progress_percentage:.1f}%")
                             if self.cancel_reencode:
                                 self.reencode_process.terminate()
                                 break
@@ -1062,14 +1317,18 @@ class YoutubeDownloaderApp(ttk.Window):
                         if self.cancel_reencode:
                             if os.path.exists(reencoded_file):
                                 os.remove(reencoded_file)
-                            self.after(0, self.status_var.set, "Re‑encoding cancelled." if self.language=="en" else "Ré‑encodage annulé.")
+                            self.after(0, self.status_var.set,
+                                       "Re‑encoding cancelled." if self.language=="en" else "Ré‑encodage annulé.")
                         else:
                             os.replace(reencoded_file, self.downloaded_file_path)
-                            self.after(0, self.status_var.set, "MP4 file re‑encoded and optimized." if self.language=="en" else "Fichier MP4 ré‑encodé et optimisé.")
+                            self.after(0, self.status_var.set,
+                                       "MP4 file re‑encoded and optimized." if self.language=="en"
+                                       else "Fichier MP4 ré‑encodé et optimisé.")
                             self.after(0, self.progress_val.set, 100)
                     except Exception as e:
                         print("Error during MP4 re‑encoding:", e)
-                        self.after(0, self.status_var.set, "Error during re‑encoding." if self.language=="en" else "Erreur lors du ré‑encodage.")
+                        self.after(0, self.status_var.set,
+                                   "Error during re‑encoding." if self.language=="en" else "Erreur lors du ré‑encodage.")
                     finally:
                         self.encoding = False
                         self.reencode_process = None
@@ -1080,7 +1339,9 @@ class YoutubeDownloaderApp(ttk.Window):
             if self.reencode_process and self.reencode_process.poll() is None:
                 try:
                     self.reencode_process.terminate()
-                    self.status_var.set("Stopping re‑encoding..." if self.language=="en" else "Arrêt du ré‑encodage en cours...")
+                    self.status_var.set(
+                        "Stopping re‑encoding..." if self.language=="en" else "Arrêt du ré‑encodage en cours..."
+                    )
                 except Exception as e:
                     print("Error terminating re‑encoding process:", e)
 
@@ -1146,7 +1407,6 @@ class YoutubeDownloaderApp(ttk.Window):
                     r.raise_for_status()
                     img_data = r.content
                     pil_img = Image.open(io.BytesIO(img_data))
-                    # Redimensionner à une taille plus petite pour un aspect élégant et MacOS-ish
                     pil_img = pil_img.resize((60, 34), Image.Resampling.LANCZOS)
                     photo = ImageTk.PhotoImage(pil_img)
                 except:
@@ -1167,12 +1427,24 @@ class YoutubeDownloaderApp(ttk.Window):
                 child.bind("<Double-1>", lambda event, url=url: self.on_history_item_double_click(url))
             btn_frame = ttk.Frame(item_frame)
             btn_frame.pack(side=tk.RIGHT, padx=5)
-            btn_copy = ttk.Button(btn_frame, text="📋", bootstyle="flat", style="History.TButton", padding=2,
-                                  command=lambda url=url: self.copy_history_url(url))
+            btn_copy = ttk.Button(
+                btn_frame,
+                text="📋",
+                bootstyle="flat",
+                style="History.TButton",
+                padding=2,
+                command=lambda url=url: self.copy_history_url(url)
+            )
             CreateToolTip(btn_copy, self.ui_strings["copy_url"])
             btn_copy.pack(side=tk.LEFT, padx=2, pady=2)
-            btn_delete = ttk.Button(btn_frame, text="🗑", bootstyle="flat", style="History.TButton", padding=2,
-                                    command=lambda idx=idx: self.delete_history_item(idx))
+            btn_delete = ttk.Button(
+                btn_frame,
+                text="🗑",
+                bootstyle="flat",
+                style="History.TButton",
+                padding=2,
+                command=lambda idx=idx: self.delete_history_item(idx)
+            )
             CreateToolTip(btn_delete, self.ui_strings["delete"])
             btn_delete.pack(side=tk.LEFT, padx=2, pady=2)
             sep = ttk.Separator(self.history_frame, orient="horizontal")
@@ -1203,6 +1475,389 @@ class YoutubeDownloaderApp(ttk.Window):
             self.history = []
             self.save_history()
             self.update_history_view()
+
+    # --- Fonctions pour l'onglet Conversion ---
+
+    def choose_conversion_file(self):
+        file_path = filedialog.askopenfilename(title=self.ui_strings["choose_file"])
+        if file_path:
+            self.conversion_file_path = file_path
+            self.lbl_selected_file.config(text=file_path)
+            # Réinitialisation des options d'export
+            self.conversion_format_var.set("mp4")
+            self.quality_var.set("Standard")
+            self.video_resolution_var.set("Original")
+            self.audio_sample_rate_var.set("44100")
+            if self.combo_conversion_format['values']:
+                self.combo_conversion_format.current(0)
+            if self.combo_quality['values']:
+                self.combo_quality.current(1)  # "Standard" index généralement 1
+            if self.combo_resolution['values']:
+                self.combo_resolution.current(0)
+            if self.combo_sample_rate['values']:
+                index = self.combo_sample_rate['values'].index("44100") if "44100" in self.combo_sample_rate['values'] else 0
+                self.combo_sample_rate.current(index)
+            info = self.get_conversion_file_info(file_path)
+            if info:
+                self.lbl_conv_file_name.config(text=f"Nom du fichier : {info.get('file_name', 'N/A')}")
+                self.lbl_conv_duration.config(text=f"Durée : {format_duration(info.get('duration', 0))}")
+                self.lbl_conv_codec.config(text=f"Format : {info.get('format_name', 'N/A')}")
+                self.lbl_conv_resolution.config(text=f"Résolution : {info.get('video_resolution', 'N/A')}")
+                self.lbl_conv_format.config(text=f"Débit global : {info.get('format_bit_rate', 'N/A')}")
+                # Affichage des infos obtenues
+                self.lbl_conv_file_name.grid()
+                self.lbl_conv_duration.grid()
+                self.lbl_conv_codec.grid()
+                self.lbl_conv_resolution.grid()
+                self.lbl_conv_format.grid()
+            thumb = self.extract_thumbnail(file_path)
+            if thumb:
+                self.lbl_conv_thumbnail.config(image=thumb)
+                self.lbl_conv_thumbnail.image = thumb
+                self.add_play_overlay()  # Ajout de l'overlay play sur le thumbnail
+            else:
+                self.lbl_conv_thumbnail.config(image=self.placeholder_tk)
+                self.remove_play_overlay()
+        else:
+            self.remove_play_overlay()
+
+    def get_conversion_file_info(self, file_path):
+        """Utilise ffprobe pour extraire des informations techniques supplémentaires."""
+        try:
+            cmd = [
+                "ffprobe", "-v", "error",
+                "-show_entries", "format=duration,format_name,bit_rate",
+                "-show_streams",
+                "-of", "json", file_path
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            info = json.loads(result.stdout)
+            duration = float(info.get("format", {}).get("duration", 0))
+            format_name = info.get("format", {}).get("format_name", "N/A")
+            format_bit_rate = info.get("format", {}).get("bit_rate", "N/A")
+            video_info = {}
+            audio_info = {}
+            for stream in info.get("streams", []):
+                if stream.get("codec_type") == "video" and not video_info:
+                    video_info = {
+                        "codec": stream.get("codec_name", "N/A"),
+                        "width": stream.get("width", "N/A"),
+                        "height": stream.get("height", "N/A"),
+                        "bit_rate": stream.get("bit_rate", "N/A"),
+                        "frame_rate": stream.get("avg_frame_rate", "N/A")
+                    }
+                elif stream.get("codec_type") == "audio" and not audio_info:
+                    audio_info = {
+                        "codec": stream.get("codec_name", "N/A"),
+                        "sample_rate": stream.get("sample_rate", "N/A"),
+                        "channels": stream.get("channels", "N/A"),
+                        "bit_rate": stream.get("bit_rate", "N/A")
+                    }
+            if video_info.get("frame_rate") and video_info.get("frame_rate") != "N/A":
+                try:
+                    num, den = video_info["frame_rate"].split('/')
+                    video_frame_rate = round(float(num)/float(den), 2)
+                except Exception:
+                    video_frame_rate = "N/A"
+            else:
+                video_frame_rate = "N/A"
+            video_resolution = f"{video_info.get('width')}x{video_info.get('height')}"
+            return {
+                "file_name": os.path.basename(file_path),
+                "duration": duration,
+                "format_name": format_name,
+                "format_bit_rate": format_bit_rate,
+                "video_codec": video_info.get("codec", "N/A"),
+                "video_resolution": video_resolution,
+                "video_bit_rate": video_info.get("bit_rate", "N/A"),
+                "video_frame_rate": video_frame_rate,
+                "audio_codec": audio_info.get("codec", "N/A"),
+                "audio_sample_rate": audio_info.get("sample_rate", "N/A"),
+                "audio_channels": audio_info.get("channels", "N/A"),
+                "audio_bit_rate": audio_info.get("bit_rate", "N/A")
+            }
+        except Exception as e:
+            print("Error getting file info:", e)
+            return {}
+
+    def extract_thumbnail(self, file_path):
+        """Extrait une miniature de la vidéo à 1 seconde."""
+        try:
+            temp_thumb = file_path + "_thumb.jpg"
+            cmd = ["ffmpeg", "-y", "-i", file_path, "-ss", "00:00:01.000", "-vframes", "1", temp_thumb]
+            subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            pil_img = Image.open(temp_thumb)
+            pil_img = pil_img.resize((240, 135), Image.Resampling.LANCZOS)
+            thumb_tk = ImageTk.PhotoImage(pil_img)
+            os.remove(temp_thumb)
+            return thumb_tk
+        except Exception as e:
+            print("Error extracting thumbnail:", e)
+            return None
+
+    def play_conversion_file(self):
+        """Lance la lecture du fichier dans le lecteur par défaut."""
+        if self.conversion_file_path and os.path.exists(self.conversion_file_path):
+            system = platform.system()
+            if system == "Darwin":
+                subprocess.run(["open", self.conversion_file_path])
+            elif system == "Windows":
+                os.startfile(self.conversion_file_path)
+            else:
+                subprocess.run(["xdg-open", self.conversion_file_path])
+
+    def on_thumbnail_click(self, event):
+        """
+        Comportement du clic sur le thumbnail de conversion.
+         - Si aucun fichier n'est choisi, lance la sélection de fichier.
+         - Sinon, lance la lecture du fichier.
+        """
+        if not self.conversion_file_path:
+            self.choose_conversion_file()
+        else:
+            self.play_conversion_file()
+
+    def add_play_overlay(self):
+        """Ajoute en surimpression une icône play sur le thumbnail."""
+        if hasattr(self, 'lbl_play_overlay'):
+            self.lbl_play_overlay.destroy()
+        self.lbl_play_overlay = ttk.Label(self.lbl_conv_thumbnail, text="▶", background="black", foreground="white", font=("Helvetica", 32))
+        self.lbl_play_overlay.place(relx=0.5, rely=0.5, anchor="center")
+        self.lbl_play_overlay.bind("<Button-1>", lambda e: self.play_conversion_file())
+
+    def remove_play_overlay(self):
+        """Supprime l'overlay play du thumbnail."""
+        if hasattr(self, 'lbl_play_overlay'):
+            self.lbl_play_overlay.destroy()
+            self.lbl_play_overlay = None
+
+    def start_conversion(self):
+        if not self.conversion_file_path or not os.path.exists(self.conversion_file_path):
+            messagebox.showerror(
+                "Error",
+                "Veuillez choisir un fichier valide." if self.language=="fr" else "Please choose a valid file."
+            )
+            return
+        duration = self.get_file_duration(self.conversion_file_path)
+        if duration is None:
+            messagebox.showerror(
+                "Error",
+                "Impossible d'obtenir la durée du fichier." if self.language=="fr" else "Unable to get file duration."
+            )
+            return
+        self.conversion_duration = duration
+        output_format = self.conversion_format_var.get()
+        base, ext = os.path.splitext(self.conversion_file_path)
+        output_file = f"{base}_converted.{output_format}"
+        i = 1
+        while os.path.exists(output_file):
+            output_file = f"{base}_converted({i}).{output_format}"
+            i += 1
+        self.conversion_output_file = output_file
+
+        # Construction de la commande ffmpeg avec les options d'export
+        cmd = ["ffmpeg", "-i", self.conversion_file_path]
+        if output_format.lower() in ["mp4", "mkv", "avi", "mov", "flv", "wmv"]:
+            # Vidéo
+            cmd.extend(["-c:v", self.video_encoder_var.get()])
+            if self.video_resolution_var.get() != "Original":
+                res_value = self.video_resolution_var.get()[:-1]
+                cmd.extend(["-vf", f"scale=-2:{res_value}"])
+            quality_map = {"Low": "28", "Standard": "23", "High": "18", "Very High": "15"}
+            cmd.extend(["-crf", quality_map.get(self.quality_var.get(), "23")])
+            cmd.extend(["-b:v", self.video_bitrate_var.get()])
+            # Ajout du préréglage vidéo
+            cmd.extend(["-preset", self.video_preset_var.get()])
+            if self.video_framerate_var.get() != "Original":
+                cmd.extend(["-r", self.video_framerate_var.get()])
+            # Audio
+            cmd.extend(["-c:a", self.audio_encoder_var.get()])
+            channels = self.audio_channels_var.get()
+            if channels == "Mono":
+                cmd.extend(["-ac", "1"])
+            elif channels == "Stereo":
+                cmd.extend(["-ac", "2"])
+            cmd.extend(["-b:a", self.audio_bitrate_var.get()])
+            if self.audio_sample_rate_var.get() != "44100":
+                cmd.extend(["-ar", self.audio_sample_rate_var.get()])
+            if self.chk_optimize.instate(["selected"]) and output_format.lower() == "mp4":
+                cmd.extend(["-movflags", "faststart"])
+        elif output_format.lower() in ["mp3", "ogg", "wav"]:
+            cmd.append("-vn")
+            cmd.extend(["-c:a", self.audio_encoder_var.get()])
+            channels = self.audio_channels_var.get()
+            if channels == "Mono":
+                cmd.extend(["-ac", "1"])
+            elif channels == "Stereo":
+                cmd.extend(["-ac", "2"])
+            cmd.extend(["-b:a", self.audio_bitrate_var.get()])
+            if self.audio_sample_rate_var.get() != "44100":
+                cmd.extend(["-ar", self.audio_sample_rate_var.get()])
+        cmd.append(self.conversion_output_file)
+        self.conversion_cmd = cmd
+        self.conversion_progress_val.set(0)
+        self.lbl_conversion_status.config(text=self.ui_strings["conversion_in_progress"])
+        self.btn_start_conversion.config(state="disabled")
+        self.btn_cancel_conversion.config(state="normal")
+        self.conversion_cancelled = False
+        threading.Thread(target=self.run_conversion_thread, daemon=True).start()
+
+    def run_conversion_thread(self):
+        cmd = self.conversion_cmd
+        try:
+            self.conversion_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True
+            )
+            while True:
+                line = self.conversion_process.stdout.readline()
+                if not line:
+                    break
+                line = line.strip()
+                match = re.search(r"time=(\d+):(\d+):(\d+\.\d+)", line)
+                if match and self.conversion_duration:
+                    hours = int(match.group(1))
+                    minutes = int(match.group(2))
+                    seconds = float(match.group(3))
+                    current_time = hours * 3600 + minutes * 60 + seconds
+                    progress_percentage = (current_time / self.conversion_duration) * 100
+                    if progress_percentage > 100:
+                        progress_percentage = 100
+                    self.after(0, self.conversion_progress_val.set, progress_percentage)
+                    self.after(0, self.lbl_conversion_status.config, {
+                        "text": f"{self.ui_strings['conversion_in_progress']} {progress_percentage:.1f}%"
+                    })
+                size_match = re.search(r"size=\s*([\d\.]+)(\w+)", line)
+                if size_match:
+                    size_val = float(size_match.group(1))
+                    unit = size_match.group(2)
+                    if unit.lower().startswith("k"):
+                        size_mb = size_val / 1024
+                    elif unit.lower().startswith("m"):
+                        size_mb = size_val
+                    elif unit.lower().startswith("g"):
+                        size_mb = size_val * 1024
+                    else:
+                        size_mb = size_val
+                    self.after(0, self.lbl_estimated_size.config, {
+                        "text": f"{self.ui_strings['estimated_size']} ~{size_mb:.1f} MB"
+                    })
+                if self.conversion_cancelled:
+                    self.conversion_process.terminate()
+                    break
+            self.conversion_process.wait()
+            retcode = self.conversion_process.returncode
+            if self.conversion_cancelled:
+                if os.path.exists(self.conversion_output_file):
+                    os.remove(self.conversion_output_file)
+                self.after(0, self.lbl_conversion_status.config, {
+                    "text": "Conversion annulée." if self.language=="fr" else "Conversion cancelled."
+                })
+            elif retcode == 0:
+                self.after(0, self.lbl_conversion_status.config, {"text": self.ui_strings["conversion_complete"]})
+                if os.path.exists(self.conversion_output_file):
+                    size_bytes = os.path.getsize(self.conversion_output_file)
+                    size_mb = size_bytes / (1024*1024)
+                    self.after(0, self.lbl_estimated_size.config, {
+                        "text": f"{self.ui_strings['estimated_size']} {size_mb:.1f} MB"
+                    })
+            else:
+                self.after(0, self.lbl_conversion_status.config, {"text": self.ui_strings["conversion_failed"]})
+        except Exception as e:
+            print("Error during conversion:", e)
+            self.after(0, self.lbl_conversion_status.config, {"text": self.ui_strings["conversion_failed"]})
+        finally:
+            self.conversion_process = None
+            self.after(0, self.btn_start_conversion.config, {"state": "normal"})
+            self.after(0, self.btn_cancel_conversion.config, {"state": "disabled"})
+
+    def cancel_conversion(self):
+        self.conversion_cancelled = True
+        if self.conversion_process and self.conversion_process.poll() is None:
+            try:
+                self.conversion_process.terminate()
+                self.lbl_conversion_status.config(
+                    text="Annulation en cours..." if self.language=="fr" else "Cancelling conversion..."
+                )
+            except Exception as e:
+                print("Error terminating conversion process:", e)
+
+    def get_file_duration(self, file_path):
+        try:
+            cmd = [
+                "ffprobe",
+                "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                file_path
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            duration = float(result.stdout.strip())
+            return duration
+        except Exception as e:
+            print("Error getting file duration:", e)
+            return None
+
+    def open_advanced_settings(self):
+        adv_win = tk.Toplevel(self)
+        adv_win.title("Paramètres avancés" if self.language=="fr" else "Advanced Settings")
+        adv_win.grab_set()
+        container = ttk.Frame(adv_win, padding=10)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(0, weight=1)
+        container.columnconfigure(1, weight=1)
+        # Disposition côte à côte des paramètres vidéo et audio
+        video_params_frame = ttk.Labelframe(container, text="Paramètres vidéo" if self.language=="fr" else "Video Parameters", padding=10)
+        video_params_frame.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
+        lbl_video_encoder = ttk.Label(video_params_frame, text="Encodeur vidéo:" if self.language=="fr" else "Video Encoder:")
+        lbl_video_encoder.grid(row=0, column=0, sticky="w", padx=5, pady=2)
+        combo_video_encoder = ttk.Combobox(video_params_frame, textvariable=self.video_encoder_var, state="readonly", values=["libx264", "libx265", "mpeg4", "libvpx-vp9", "libaom-av1"])
+        combo_video_encoder.grid(row=0, column=1, sticky="w", padx=5, pady=2)
+        CreateToolTip(combo_video_encoder, "Sélectionner l'encodeur vidéo à utiliser" if self.language=="fr" else "Select the video encoder")
+        lbl_video_bitrate = ttk.Label(video_params_frame, text="Bitrate vidéo:" if self.language=="fr" else "Video Bitrate:")
+        lbl_video_bitrate.grid(row=1, column=0, sticky="w", padx=5, pady=2)
+        combo_video_bitrate = ttk.Combobox(video_params_frame, textvariable=self.video_bitrate_var, state="readonly", values=["500k", "1000k", "2000k", "3000k"])
+        combo_video_bitrate.grid(row=1, column=1, sticky="w", padx=5, pady=2)
+        CreateToolTip(combo_video_bitrate, "Définit le débit binaire vidéo" if self.language=="fr" else "Sets the video bitrate")
+        lbl_video_framerate = ttk.Label(video_params_frame, text="Cadence:" if self.language=="fr" else "Frame Rate:")
+        lbl_video_framerate.grid(row=2, column=0, sticky="w", padx=5, pady=2)
+        combo_video_framerate = ttk.Combobox(video_params_frame, textvariable=self.video_framerate_var, state="readonly", values=["Original", "24", "30", "60"])
+        combo_video_framerate.grid(row=2, column=1, sticky="w", padx=5, pady=2)
+        CreateToolTip(combo_video_framerate, "Conserver la cadence d'origine ou forcer une nouvelle cadence" if self.language=="fr" else "Keep original frame rate or set a new one")
+        # Nouveau champ pour le préréglage vidéo
+        lbl_video_preset = ttk.Label(video_params_frame, text="Préréglage:" if self.language=="fr" else "Preset:")
+        lbl_video_preset.grid(row=3, column=0, sticky="w", padx=5, pady=2)
+        combo_video_preset = ttk.Combobox(video_params_frame, textvariable=self.video_preset_var, state="readonly", values=["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"])
+        combo_video_preset.grid(row=3, column=1, sticky="w", padx=5, pady=2)
+        CreateToolTip(combo_video_preset, "Sélectionner le préréglage pour l'encodage vidéo" if self.language=="fr" else "Select the preset for video encoding")
+        # Paramètres audio
+        audio_params_frame = ttk.Labelframe(container, text="Paramètres audio" if self.language=="fr" else "Audio Parameters", padding=10)
+        audio_params_frame.grid(row=0, column=1, padx=5, pady=5, sticky="nsew")
+        lbl_audio_encoder = ttk.Label(audio_params_frame, text="Encodeur audio:" if self.language=="fr" else "Audio Encoder:")
+        lbl_audio_encoder.grid(row=0, column=0, sticky="w", padx=5, pady=2)
+        combo_audio_encoder = ttk.Combobox(audio_params_frame, textvariable=self.audio_encoder_var, state="readonly", values=["aac", "mp3", "ac3", "opus", "flac", "pcm_s16le"])
+        combo_audio_encoder.grid(row=0, column=1, sticky="w", padx=5, pady=2)
+        CreateToolTip(combo_audio_encoder, "Sélectionner l'encodeur audio" if self.language=="fr" else "Select the audio encoder")
+        lbl_audio_channels = ttk.Label(audio_params_frame, text="Canaux:" if self.language=="fr" else "Channels:")
+        lbl_audio_channels.grid(row=1, column=0, sticky="w", padx=5, pady=2)
+        combo_audio_channels = ttk.Combobox(audio_params_frame, textvariable=self.audio_channels_var, state="readonly", values=["Mono", "Stereo"])
+        combo_audio_channels.grid(row=1, column=1, sticky="w", padx=5, pady=2)
+        CreateToolTip(combo_audio_channels, "Sélectionner le nombre de canaux audio" if self.language=="fr" else "Select the number of audio channels")
+        lbl_audio_bitrate = ttk.Label(audio_params_frame, text="Bitrate audio:" if self.language=="fr" else "Audio Bitrate:")
+        lbl_audio_bitrate.grid(row=2, column=0, sticky="w", padx=5, pady=2)
+        combo_audio_bitrate = ttk.Combobox(audio_params_frame, textvariable=self.audio_bitrate_var, state="readonly", values=["64k", "128k", "192k", "256k", "320k"])
+        combo_audio_bitrate.grid(row=2, column=1, sticky="w", padx=5, pady=2)
+        CreateToolTip(combo_audio_bitrate, "Définit le débit binaire audio" if self.language=="fr" else "Sets the audio bitrate")
+        # Nouveau champ pour l'échantillonnage audio
+        lbl_audio_sample_rate = ttk.Label(audio_params_frame, text="Échantillonnage:" if self.language=="fr" else "Sample Rate:")
+        lbl_audio_sample_rate.grid(row=3, column=0, sticky="w", padx=5, pady=2)
+        combo_audio_sample_rate = ttk.Combobox(audio_params_frame, textvariable=self.audio_sample_rate_var, state="readonly", values=["8000", "11025", "16000", "22050", "32000", "44100", "48000", "88200", "96000"])
+        combo_audio_sample_rate.grid(row=3, column=1, sticky="w", padx=5, pady=2)
+        CreateToolTip(combo_audio_sample_rate, "Sélectionner la fréquence d'échantillonnage audio" if self.language=="fr" else "Select the audio sample rate")
+        btn_close = ttk.Button(adv_win, text="OK", command=adv_win.destroy)
+        btn_close.pack(pady=5)
 
 if __name__ == "__main__":
     app = YoutubeDownloaderApp()
