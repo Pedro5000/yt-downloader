@@ -116,7 +116,10 @@ def get_ui_strings(language):
             "conversion_complete": "Conversion terminée",
             "conversion_failed": "La conversion a échoué",
             "estimated_size": "Taille estimée :",
-            "advanced_settings": "Paramètres avancés"
+            "advanced_settings": "Paramètres avancés",
+            # Nouveaux textes pour la miniature
+            "download_thumbnail": "Télécharger l'image",
+            "download_thumbnail_tooltip": "Télécharger la miniature en haute résolution"
         }
     else:
         return {
@@ -176,7 +179,10 @@ def get_ui_strings(language):
             "conversion_complete": "Conversion complete",
             "conversion_failed": "Conversion failed",
             "estimated_size": "Estimated size:",
-            "advanced_settings": "Advanced Settings"
+            "advanced_settings": "Advanced Settings",
+            # Nouveaux textes pour la miniature
+            "download_thumbnail": "Download Thumbnail",
+            "download_thumbnail_tooltip": "Download the thumbnail in high resolution"
         }
 
 # ---------------------------------------------------------
@@ -621,6 +627,10 @@ class YoutubeDownloaderApp(ttk.Window):
         self.lbl_thumbnail.grid(row=0, column=0, rowspan=7, padx=10, pady=5)
         # Modification : le clic sur l'image de la vidéo se gère désormais en simple clic
         self.lbl_thumbnail.bind("<Button-1>", self.on_thumbnail_click)
+        # Nouveau bouton pour télécharger la miniature, positionné en bas à droite du thumbnail
+        self.btn_download_thumbnail = ttk.Button(self.card_frame, text=self.ui_strings["download_thumbnail"], command=self.download_thumbnail)
+        self.btn_download_thumbnail.place(in_=self.lbl_thumbnail, relx=1.0, rely=1.0, anchor="se", x=-5, y=-5)
+        CreateToolTip(self.btn_download_thumbnail, self.ui_strings["download_thumbnail_tooltip"])
         # Informations sur la vidéo
         self.lbl_video_title = ttk.Label(self.card_frame, style="Card.TLabel", font=("Helvetica", 16, "bold"))
         self.lbl_video_channel = ttk.Label(self.card_frame, style="Card.TLabel", font=("Helvetica", 12))
@@ -1475,6 +1485,30 @@ class YoutubeDownloaderApp(ttk.Window):
             self.history = []
             self.save_history()
             self.update_history_view()
+
+    # --- Nouvelle fonction pour télécharger la miniature ---
+    def download_thumbnail(self):
+        thumb_url = self.current_video_info.get("thumbnail_url")
+        if not thumb_url:
+            messagebox.showerror("Error", "Aucune miniature disponible." if self.language=="fr" else "No thumbnail available.")
+            return
+        try:
+            response = requests.get(thumb_url, stream=True)
+            response.raise_for_status()
+            ext = os.path.splitext(thumb_url)[1]
+            if not ext:
+                ext = ".jpg"
+            title = self.current_video_info.get("title", "thumbnail")
+            default_filename = sanitize_filename(title) + ext
+            file_path = filedialog.asksaveasfilename(defaultextension=ext, initialfile=default_filename,
+                                                     title=("Enregistrer l'image" if self.language=="fr" else "Save Image"),
+                                                     filetypes=[("Image files", "*.jpg *.jpeg *.png *.gif"), ("All files", "*.*")])
+            if file_path:
+                with open(file_path, "wb") as f:
+                    f.write(response.content)
+                messagebox.showinfo("Info", "Image téléchargée avec succès." if self.language=="fr" else "Thumbnail downloaded successfully.")
+        except Exception as e:
+            messagebox.showerror("Error", ("Erreur lors du téléchargement de l'image : " if self.language=="fr" else "Error downloading thumbnail: ") + str(e))
 
     # --- Fonctions pour l'onglet Conversion ---
 
