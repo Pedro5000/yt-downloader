@@ -119,7 +119,9 @@ def get_ui_strings(language):
             "advanced_settings": "Paramètres avancés",
             # Nouveaux textes pour la miniature
             "download_thumbnail": "Télécharger l'image",
-            "download_thumbnail_tooltip": "Télécharger la miniature en haute résolution"
+            "download_thumbnail_tooltip": "Télécharger la miniature en haute résolution",
+            "audio_language": "Langue audio :",
+            "auto": "Auto"
         }
     else:
         return {
@@ -182,7 +184,9 @@ def get_ui_strings(language):
             "advanced_settings": "Advanced Settings",
             # Nouveaux textes pour la miniature
             "download_thumbnail": "Download Thumbnail",
-            "download_thumbnail_tooltip": "Download the thumbnail in high resolution"
+            "download_thumbnail_tooltip": "Download the thumbnail in high resolution",
+            "audio_language": "Audio language:",
+            "auto": "Auto"
         }
 
 # ---------------------------------------------------------
@@ -242,8 +246,9 @@ class CreateToolTip(object):
 def parse_available_formats(video_url):
     try:
         cmd = ["yt-dlp", "-F", video_url]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        output = result.stdout
+        output = run_info_command_with_age_retry(cmd, video_url)
+        if output is None:
+            return [], []
     except subprocess.CalledProcessError:
         return [], []
 
@@ -352,8 +357,10 @@ def parse_available_formats(video_url):
 def get_thumbnail_url(video_url):
     try:
         cmd = ["yt-dlp", "--get-thumbnail", video_url]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        thumb_url = result.stdout.strip()
+        stdout = run_info_command_with_age_retry(cmd, video_url)
+        if not stdout:
+            return None
+        thumb_url = stdout.strip()
         return thumb_url if thumb_url else None
     except subprocess.CalledProcessError:
         return None
@@ -361,8 +368,10 @@ def get_thumbnail_url(video_url):
 def get_video_info(video_url):
     try:
         cmd = ["yt-dlp", "-j", video_url]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        data = json.loads(result.stdout)
+        stdout = run_info_command_with_age_retry(cmd, video_url)
+        if stdout is None:
+            return None, None, None, None, None, None, None
+        data = json.loads(stdout)
         title = data.get("title")
         uploader = data.get("uploader")
         upload_date = data.get("upload_date")
@@ -376,6 +385,120 @@ def get_video_info(video_url):
     except Exception as e:
         print("Error retrieving video info:", e)
         return None, None, None, None, None, None, None
+
+# ---------------------------------------------------------
+# Shared helper to retry yt-dlp info commands with cookies
+# ---------------------------------------------------------
+def run_info_command_with_age_retry(cmd, url):
+    """
+    Runs a lightweight yt-dlp info command and retries with Firefox cookies
+    if age restriction is detected.
+    """
+    def needs_age_retry(output_text):
+        if not output_text:
+            return False
+        lower = output_text.lower()
+        return "sign in to confirm your age" in lower or "age-restricted" in lower
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            return result.stdout
+        combined = f"{result.stdout}\n{result.stderr}"
+        if needs_age_retry(combined):
+            cmd_with_cookies = cmd.copy()
+            if "--cookies-from-browser" not in cmd_with_cookies:
+                cmd_with_cookies.insert(1, "--cookies-from-browser")
+                cmd_with_cookies.insert(2, "firefox")
+            retry = subprocess.run(cmd_with_cookies, capture_output=True, text=True)
+            if retry.returncode == 0:
+                return retry.stdout
+        return None
+    except Exception as e:
+        print("Error running info command:", e)
+        return None
+
+# =========================================================
+# Intelligent yt-dlp execution with age restriction support
+# =========================================================
+def run_yt_dlp_command(app, cmd, url):
+    """
+    Run yt-dlp once, detect age-restriction errors, then retry automatically
+    with Firefox cookies if needed.
+    """
+    download_regex = re.compile(r'^\[download\].*?([\d\.]+)%')
+    destination_regex = re.compile(r'^\[download\]\s+Destination:\s+(.+)$')
+    merger_regex = re.compile(r'^\[Merger\]\s+Merging formats into\s+"(.+)"$')
+    age_restricted = False
+
+    def stream_process(process):
+        nonlocal age_restricted
+        for line in process.stdout:
+            line = line.strip()
+            print(line)
+            if "Sign in to confirm your age" in line or "age-restricted" in line.lower():
+                age_restricted = True
+            match = download_regex.search(line)
+            if match:
+                try:
+                    val_float = float(match.group(1))
+                except ValueError:
+                    val_float = 0.0
+                if app.skip_first_progress_value:
+                    app.skip_first_progress_value = False
+                    continue
+                app.after(0, app.set_smooth_target, val_float)
+            dest_match = destination_regex.match(line)
+            if dest_match:
+                app.downloaded_file_path = dest_match.group(1).strip()
+            merger_match = merger_regex.match(line)
+            if merger_match:
+                app.downloaded_file_path = merger_match.group(1).strip()
+        process.wait()
+        return process.returncode
+
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        universal_newlines=True
+    )
+    app.download_process = process
+    retcode = stream_process(process)
+
+    if app.cancelled:
+        return retcode
+
+    if retcode != 0 and age_restricted:
+        def show_age_notice():
+            app.status_var.set("Vidéo restreinte par âge → utilisation des cookies Firefox…")
+            if not getattr(app, "age_restriction_notice_shown", False):
+                app.age_restriction_notice_shown = True
+                messagebox.showinfo(
+                    "Vidéo restreinte",
+                    "Cette vidéo nécessite une connexion pour confirmer l'âge.\n"
+                    "Vos cookies Firefox seront utilisés. Assurez-vous d'être connecté à YouTube dans Firefox.",
+                    parent=app
+                )
+
+        app.after(0, show_age_notice)
+        app.skip_first_progress_value = True
+        cmd_with_cookies = cmd.copy()
+        if "--cookies-from-browser" not in cmd_with_cookies:
+            cmd_with_cookies.insert(1, "--cookies-from-browser")
+            cmd_with_cookies.insert(2, "firefox")
+        process2 = subprocess.Popen(
+            cmd_with_cookies,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            universal_newlines=True
+        )
+        app.download_process = process2
+        retcode = stream_process(process2)
+
+    return retcode
 
 # ---------------------------------------------------------
 # Main application class for ViDL
@@ -420,12 +543,14 @@ class YoutubeDownloaderApp(ttk.Window):
         self.url_var = ttk.StringVar()
         self.export_type_var = ttk.StringVar(value="mp4")
         self.selected_format = ttk.StringVar()
+        self.audio_language_var = ttk.StringVar(value="Auto")  # "Auto", "en", "pl", "fr", ...
         self.status_var = ttk.StringVar(value=self.ui_strings["waiting"])
         self.progress_val = ttk.DoubleVar(value=0.0)
         self.download_target = 0.0
         self.animation_in_progress = False
         self.skip_first_progress_value = True
         self.cancelled = False
+        self.age_restriction_notice_shown = False
         self.open_folder_var = ttk.BooleanVar(value=True)
         self.output_dir = os.path.join(os.path.expanduser("~"), "Downloads")
         self.downloaded_file_path = None
@@ -553,6 +678,10 @@ class YoutubeDownloaderApp(ttk.Window):
         self.btn_cancel.config(text=self.ui_strings["cancel"])
         self.btn_download.config(text=self.ui_strings["download_button"])
         self.btn_reencode.config(text=self.ui_strings["reencode_mp4"])
+        self.lbl_audio_lang.config(text=self.ui_strings["audio_language"])
+        # Remet "Auto" localisé si nécessaire
+        if self.audio_language_var.get().lower() in ["auto", self.ui_strings.get("auto", "Auto").lower()]:
+            self.audio_language_var.set(self.ui_strings.get("auto", "Auto"))
         self.lbl_search.config(text=self.ui_strings["search"])
         self.btn_clear_history.config(text=self.ui_strings["clear_history"])
 
@@ -663,6 +792,20 @@ class YoutubeDownloaderApp(ttk.Window):
         self.lbl_format.grid(row=0, column=2, sticky=tk.E, padx=5, pady=5)
         self.combo_format = ttk.Combobox(self.frm_download, textvariable=self.selected_format, width=40, state="readonly")
         self.combo_format.grid(row=0, column=3, sticky=(tk.W, tk.E), padx=5, pady=5)
+
+        # --- Choix de la langue audio ---
+        self.lbl_audio_lang = ttk.Label(self.frm_download, text=self.ui_strings["audio_language"])
+        self.lbl_audio_lang.grid(row=1, column=1, sticky=tk.E, padx=5, pady=5)
+
+        # Valeurs: code langues + "Auto"
+        audio_lang_values = [
+            "Auto", "en", "pl", "fr", "de", "es", "it", "pt", "ja", "ko", "zh-Hans", "zh-Hant"
+        ]
+        self.combo_audio_lang = ttk.Combobox(
+            self.frm_download, textvariable=self.audio_language_var,
+            state="readonly", values=audio_lang_values, width=12
+        )
+        self.combo_audio_lang.grid(row=1, column=2, sticky=(tk.W), padx=5, pady=5)
         self.btn_choose_folder = ttk.Button(
             self.frm_download,
             text=self.ui_strings["choose_folder"],
@@ -1142,25 +1285,73 @@ class YoutubeDownloaderApp(ttk.Window):
             i += 1
         output_template = candidate
 
+        # --- Nouvelle construction de la commande avec préférence de langue ---
+        selected_lang = self.audio_language_var.get().strip()
+        is_auto_lang = (selected_lang.lower() in ["auto", self.ui_strings.get("auto", "auto").lower()])
+
         if chosen_export == "mp4":
-            cmd = [
-                "yt-dlp",
-                "-f", combo_id,
-                "--merge-output-format", "mp4",
-                "--newline",
-                "-o", output_template,
-                url
-            ]
+            if is_auto_lang:
+                # Comportement inchangé
+                cmd = [
+                    "yt-dlp",
+                    "-f", combo_id,
+                    "--merge-output-format", "mp4",
+                    "--newline",
+                    "-o", output_template,
+                    url
+                ]
+            else:
+                # On tente de garder la vidéo choisie + audio filtré par langue
+                if "+" in combo_id:
+                    # combo_id = "VID+AUD" -> on remplace juste l'audio
+                    vid_id = combo_id.split("+", 1)[0].strip()
+                    fmt_expr = f"{vid_id}+ba[language^={selected_lang}]/(bestvideo+bestaudio/b)"
+                    cmd = [
+                        "yt-dlp",
+                        "-f", fmt_expr,
+                        "--merge-output-format", "mp4",
+                        "-S", f"lang:{selected_lang}",
+                        "--newline",
+                        "-o", output_template,
+                        url
+                    ]
+                else:
+                    # combo_id = un seul id (format muxé par YouTube)
+                    # On ne peut pas remplacer l'audio directement : on ajoute au moins une préférence de tri
+                    cmd = [
+                        "yt-dlp",
+                        "-f", combo_id,
+                        "--merge-output-format", "mp4",
+                        "-S", f"lang:{selected_lang}",
+                        "--newline",
+                        "-o", output_template,
+                        url
+                    ]
         else:
-            cmd = [
-                "yt-dlp",
-                "-f", combo_id,
-                "--extract-audio",
-                "--audio-format", "mp3",
-                "--newline",
-                "-o", output_template,
-                url
-            ]
+            # Extraction audio (MP3)
+            if is_auto_lang:
+                cmd = [
+                    "yt-dlp",
+                    "-f", combo_id,
+                    "--extract-audio",
+                    "--audio-format", "mp3",
+                    "--newline",
+                    "-o", output_template,
+                    url
+                ]
+            else:
+                # Forcer une piste audio dans la langue souhaitée, fallback sur bestaudio
+                fmt_expr = f"ba[language^={selected_lang}]/bestaudio"
+                cmd = [
+                    "yt-dlp",
+                    "-f", fmt_expr,
+                    "--extract-audio",
+                    "--audio-format", "mp3",
+                    "-S", f"lang:{selected_lang}",
+                    "--newline",
+                    "-o", output_template,
+                    url
+                ]
 
         self.progress_val.set(0.0)
         self.download_target = 0.0
@@ -1173,35 +1364,8 @@ class YoutubeDownloaderApp(ttk.Window):
         threading.Thread(target=self.run_download_thread, args=(cmd,), daemon=True).start()
 
     def run_download_thread(self, cmd):
-        download_regex = re.compile(r'^\[download\]\s+([\d\.]+)%')
-        destination_regex = re.compile(r'^\[download\]\s+Destination:\s+(.+)$')
-        merger_regex = re.compile(r'^\[Merger\]\s+Merging formats into\s+"(.+)"$')
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                   text=True, universal_newlines=True)
-        self.download_process = process
-        for line in process.stdout:
-            line = line.strip()
-            match = download_regex.match(line)
-            if match:
-                try:
-                    val_float = float(match.group(1))
-                except ValueError:
-                    val_float = 0.0
-                if self.skip_first_progress_value:
-                    self.skip_first_progress_value = False
-                    continue
-                current_v = self.progress_val.get()
-                new_val = max(current_v, val_float)
-                self.after(0, self.set_smooth_target, new_val)
-            match_dest = destination_regex.match(line)
-            if match_dest:
-                self.downloaded_file_path = match_dest.group(1).strip()
-            match_merger = merger_regex.match(line)
-            if match_merger:
-                final_merged = match_merger.group(1).strip()
-                self.downloaded_file_path = final_merged
-        process.wait()
-        retcode = process.returncode
+        clean_cmd = [arg for arg in cmd if arg not in ["--cookies-from-browser", "firefox"]]
+        retcode = run_yt_dlp_command(self, clean_cmd, self.url_var.get().strip())
         self.after(0, lambda: self.btn_cancel.config(state="disabled"))
         self.download_process = None
         if retcode == 0:
