@@ -18,11 +18,11 @@ COLORS_DARK = {
     "surface_hover": "#3A3A3C",
     "surface_pressed": "#1C1C1E",
 
-    # Text
+    # Text (sans alpha - tkinter ne supporte pas)
     "text_primary": "#FFFFFF",
     "text_secondary": "#EBEBF5",
-    "text_tertiary": "#EBEBF599",
-    "text_quaternary": "#EBEBF54D",
+    "text_tertiary": "#8E8E93",
+    "text_quaternary": "#636366",
 
     # Accent Colors (Bleu macOS)
     "accent": "#0A84FF",
@@ -31,10 +31,10 @@ COLORS_DARK = {
 
     # Semantic Colors
     "success": "#30D158",
-    "success_muted": "#30D15833",
+    "success_muted": "#234D2C",
     "warning": "#FFD60A",
     "error": "#FF453A",
-    "error_muted": "#FF453A33",
+    "error_muted": "#4D2623",
 
     # Borders & Separators
     "border": "#38383A",
@@ -55,11 +55,11 @@ COLORS_LIGHT = {
     "surface_hover": "#F2F2F7",
     "surface_pressed": "#E5E5EA",
 
-    # Text
+    # Text (sans alpha - tkinter ne supporte pas)
     "text_primary": "#000000",
     "text_secondary": "#3C3C43",
-    "text_tertiary": "#3C3C4399",
-    "text_quaternary": "#3C3C4333",
+    "text_tertiary": "#8E8E93",
+    "text_quaternary": "#AEAEB2",
 
     # Accent Colors
     "accent": "#007AFF",
@@ -68,10 +68,10 @@ COLORS_LIGHT = {
 
     # Semantic Colors
     "success": "#34C759",
-    "success_muted": "#34C75933",
+    "success_muted": "#D4EDDA",
     "warning": "#FF9500",
     "error": "#FF3B30",
-    "error_muted": "#FF3B3033",
+    "error_muted": "#F8D7DA",
 
     # Borders
     "border": "#C6C6C8",
