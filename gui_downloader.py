@@ -565,6 +565,7 @@ class YoutubeDownloaderApp(ttk.Window):
         self.cancel_reencode = False
 
         self.placeholder_tk = self.create_placeholder_image()
+        self.placeholder_history_tk = self.create_placeholder_image(60, 34)
 
         self.url_placeholder = self.ui_strings["url_placeholder"]
         self.url_var.set(self.url_placeholder)
@@ -601,11 +602,10 @@ class YoutubeDownloaderApp(ttk.Window):
         self.build_menu()
         self.build_ui()
 
-    def create_placeholder_image(self):
-        width, height = 240, 135
+    def create_placeholder_image(self, width=240, height=135):
         placeholder_img = Image.new("RGB", (width, height), (50, 50, 50))
         draw = ImageDraw.Draw(placeholder_img)
-        triangle_size = 60
+        triangle_size = min(width, height) // 2
         center_x, center_y = width // 2, height // 2
         half_size = triangle_size // 2
         triangle_coords = [
@@ -1595,7 +1595,7 @@ class YoutubeDownloaderApp(ttk.Window):
                 photo = self.history_images[thumb_url]
                 lbl_thumbnail = ttk.Label(item_frame, image=photo)
             else:
-                lbl_thumbnail = ttk.Label(item_frame, image=self.placeholder_tk)
+                lbl_thumbnail = ttk.Label(item_frame, image=self.placeholder_history_tk)
                 self._load_thumbnail_async(thumb_url, lbl_thumbnail)
             lbl_thumbnail.pack(side=tk.LEFT, padx=(0,10))
             text_frame = ttk.Frame(item_frame)
