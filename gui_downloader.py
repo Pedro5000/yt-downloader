@@ -513,9 +513,10 @@ class YoutubeDownloaderApp(ttk.Window):
         sys.argv[0] = "ViDL"
         self.center_window(840, 705)
         try:
-            icon_img = tk.PhotoImage(file="/Users/pierredv/Coding/yt-downloader/icon.png")
+            icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.png")
+            icon_img = tk.PhotoImage(file=icon_path)
             self.iconphoto(False, icon_img)
-        except:
+        except Exception:
             pass
         self.lift()
         self.attributes("-topmost", True)
@@ -528,7 +529,10 @@ class YoutubeDownloaderApp(ttk.Window):
         self.style.configure("Card.TFrame", background=self.style.colors.get("light"), padding=10, relief="flat")
         self.style.configure("Card.TLabel", background=self.style.colors.get("light"))
         self.progress_style_name = "download.Horizontal.TProgressbar"
+        self.progress_style_success = "success.Horizontal.TProgressbar"
         self.style.configure(self.progress_style_name, thickness=20, borderwidth=0, relief="flat")
+        self.style.configure(self.progress_style_success, thickness=20, borderwidth=0, relief="flat",
+                             background="#28a745")
         self.style.configure("Analyze.Horizontal.TProgressbar",
                              thickness=10,
                              troughcolor=self.style.colors.get("dark"),
@@ -730,6 +734,7 @@ class YoutubeDownloaderApp(ttk.Window):
         self.ent_url.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, pady=5)
         self.ent_url.bind("<FocusIn>", self.clear_url_placeholder)
         self.ent_url.bind("<FocusOut>", self.add_url_placeholder)
+        self.ent_url.bind("<Return>", lambda e: self.analyze_video())
         btn_paste = ttk.Button(frm_search, text="📋", bootstyle="secondary", command=self.paste_url)
         btn_paste.pack(side=tk.LEFT, padx=5, pady=5)
         CreateToolTip(btn_paste, self.ui_strings["paste_tooltip"])
@@ -870,6 +875,8 @@ class YoutubeDownloaderApp(ttk.Window):
         self.ent_search = ttk.Entry(search_frame, textvariable=self.search_var)
         self.ent_search.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
         self.ent_search.bind("<KeyRelease>", self.update_history_view)
+        self.lbl_copy_feedback = ttk.Label(search_frame, text="", foreground="#28a745")
+        self.lbl_copy_feedback.pack(side=tk.RIGHT, padx=5)
         container_frame = ttk.Frame(self.tab_history)
         container_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         canvas = tk.Canvas(container_frame)
@@ -1218,7 +1225,16 @@ class YoutubeDownloaderApp(ttk.Window):
             self.video_format_options = options
             self.combo_format['values'] = display_values
             if display_values:
-                self.combo_format.current(0)
+                # Sélectionner par défaut 1080p, sinon 720p, sinon le dernier (meilleure qualité)
+                default_idx = len(options) - 1  # Par défaut la meilleure qualité
+                for i, fmt in enumerate(options):
+                    h = min(fmt["height"], fmt["width"])  # Hauteur effective
+                    if h == 1080:
+                        default_idx = i
+                        break
+                    elif h == 720:
+                        default_idx = i  # Continue à chercher 1080p
+                self.combo_format.current(default_idx)
         else:
             combo_values = [item[1] for item in self.audio_format_list]
             self.combo_format['values'] = combo_values
@@ -1355,6 +1371,7 @@ class YoutubeDownloaderApp(ttk.Window):
 
         self.progress_val.set(0.0)
         self.download_target = 0.0
+        self.progress_bar.configure(style=self.progress_style_name)
         self.status_var.set(self.ui_strings["download_in_progress"] + " 0.0%")
         self.skip_first_progress_value = True
         self.btn_reencode.pack_forget()
@@ -1411,6 +1428,7 @@ class YoutubeDownloaderApp(ttk.Window):
         if success:
             self.download_target = 100
             self.progress_val.set(100)
+            self.progress_bar.configure(style=self.progress_style_success)
             file_size_msg = ""
             if self.downloaded_file_path:
                 timeout = 3.0
@@ -1564,7 +1582,7 @@ class YoutubeDownloaderApp(ttk.Window):
         for widget in self.history_frame.winfo_children():
             widget.destroy()
         query = self.search_var.get().lower() if hasattr(self, "search_var") else ""
-        for idx, entry in enumerate(self.history):
+        for idx, entry in enumerate(reversed(self.history)):
             title = entry.get("title", "")
             url = entry.get("url", "")
             date = entry.get("download_date", "")
@@ -1575,18 +1593,10 @@ class YoutubeDownloaderApp(ttk.Window):
             thumb_url = entry.get("thumbnail_url")
             if thumb_url in self.history_images:
                 photo = self.history_images[thumb_url]
+                lbl_thumbnail = ttk.Label(item_frame, image=photo)
             else:
-                try:
-                    r = requests.get(thumb_url, timeout=5)
-                    r.raise_for_status()
-                    img_data = r.content
-                    pil_img = Image.open(io.BytesIO(img_data))
-                    pil_img = pil_img.resize((60, 34), Image.Resampling.LANCZOS)
-                    photo = ImageTk.PhotoImage(pil_img)
-                except:
-                    photo = self.placeholder_tk
-                self.history_images[thumb_url] = photo
-            lbl_thumbnail = ttk.Label(item_frame, image=photo)
+                lbl_thumbnail = ttk.Label(item_frame, image=self.placeholder_tk)
+                self._load_thumbnail_async(thumb_url, lbl_thumbnail)
             lbl_thumbnail.pack(side=tk.LEFT, padx=(0,10))
             text_frame = ttk.Frame(item_frame)
             text_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -1617,7 +1627,7 @@ class YoutubeDownloaderApp(ttk.Window):
                 bootstyle="flat",
                 style="History.TButton",
                 padding=2,
-                command=lambda idx=idx: self.delete_history_item(idx)
+                command=lambda u=url: self.delete_history_item(u)
             )
             CreateToolTip(btn_delete, self.ui_strings["delete"])
             btn_delete.pack(side=tk.LEFT, padx=2, pady=2)
@@ -1631,17 +1641,15 @@ class YoutubeDownloaderApp(ttk.Window):
     def copy_history_url(self, url):
         self.clipboard_clear()
         self.clipboard_append(url)
-        messagebox.showinfo("Info", self.ui_strings["copy_copied"])
+        self.lbl_copy_feedback.config(text=self.ui_strings["copy_copied"])
+        self.after(2000, lambda: self.lbl_copy_feedback.config(text=""))
 
-    def delete_history_item(self, idx):
+    def delete_history_item(self, url):
         confirm = messagebox.askyesno(self.ui_strings["delete"], self.ui_strings["confirm_delete"])
         if confirm:
-            try:
-                del self.history[idx]
-                self.save_history()
-                self.update_history_view()
-            except Exception as e:
-                messagebox.showerror("Error", f"An error occurred while deleting the entry:\n{e}")
+            self.history = [e for e in self.history if e.get("url") != url]
+            self.save_history()
+            self.update_history_view()
 
     def clear_history(self):
         confirm = messagebox.askyesno(self.ui_strings["clear_history"], self.ui_strings["confirm_clear_history"])
@@ -1649,6 +1657,26 @@ class YoutubeDownloaderApp(ttk.Window):
             self.history = []
             self.save_history()
             self.update_history_view()
+
+    def _load_thumbnail_async(self, thumb_url, label):
+        """Charge une miniature en arrière-plan et met à jour le label."""
+        def load():
+            try:
+                r = requests.get(thumb_url, timeout=5)
+                r.raise_for_status()
+                img_data = r.content
+                pil_img = Image.open(io.BytesIO(img_data))
+                pil_img = pil_img.resize((60, 34), Image.Resampling.LANCZOS)
+                photo = ImageTk.PhotoImage(pil_img)
+                self.history_images[thumb_url] = photo
+                def update_label():
+                    if label.winfo_exists():
+                        label.config(image=photo)
+                        label.image = photo
+                self.after(0, update_label)
+            except Exception:
+                pass
+        threading.Thread(target=load, daemon=True).start()
 
     # --- Nouvelle fonction pour télécharger la miniature ---
     def download_thumbnail(self):
