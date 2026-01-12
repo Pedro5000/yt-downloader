@@ -22,7 +22,6 @@ import tkinter.filedialog as filedialog
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from tkinter import messagebox
-from theme_premium import PremiumTheme, COLORS_DARK, SPACING
 
 # ---------------------------------------------------------
 # Utility functions
@@ -508,16 +507,11 @@ class YoutubeDownloaderApp(ttk.Window):
     def __init__(self, *args, **kwargs):
         kwargs["themename"] = kwargs.get("themename", "darkly")
         super().__init__(*args, **kwargs)
-
-        # Appliquer le thème premium macOS
-        self.theme = PremiumTheme(self.style, self, dark_mode=True)
-        self.colors = COLORS_DARK
-
         self.language = "fr"
         self.ui_strings = get_ui_strings(self.language)
         self.title(self.ui_strings["title"])
         sys.argv[0] = "ViDL"
-        self.center_window(900, 720)
+        self.center_window(840, 705)
         try:
             icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.png")
             icon_img = tk.PhotoImage(file=icon_path)
@@ -529,14 +523,22 @@ class YoutubeDownloaderApp(ttk.Window):
         self.after(10, lambda: self.attributes("-topmost", False))
         if sys.platform == "darwin":
             self.attributes("-alpha", 0.98)
+        default_font = tkFont.Font(family="Segoe UI", size=12)
+        self.option_add("*Font", default_font)
 
-        # Configurer le fond de la fenêtre
-        self.configure(bg=self.colors["bg_primary"])
-
-        # Styles spécifiques à l'application
-        self.progress_style_name = "Download.Horizontal.TProgressbar"
-        self.progress_style_success = "Success.Horizontal.TProgressbar"
-        self.style.configure("History.TButton", padding=(6, 4))
+        self.style.configure("Card.TFrame", background=self.style.colors.get("light"), padding=10, relief="flat")
+        self.style.configure("Card.TLabel", background=self.style.colors.get("light"))
+        self.progress_style_name = "download.Horizontal.TProgressbar"
+        self.progress_style_success = "success.Horizontal.TProgressbar"
+        self.style.configure(self.progress_style_name, thickness=20, borderwidth=0, relief="flat")
+        self.style.configure(self.progress_style_success, thickness=20, borderwidth=0, relief="flat",
+                             background="#28a745")
+        self.style.configure("Analyze.Horizontal.TProgressbar",
+                             thickness=10,
+                             troughcolor=self.style.colors.get("dark"),
+                             background=self.style.colors.get("info"),
+                             borderwidth=0)
+        self.style.configure("History.TButton", padding=2, font=("Helvetica", 10))
 
         self.video_format_list = []
         self.audio_format_list = []
@@ -733,15 +735,15 @@ class YoutubeDownloaderApp(ttk.Window):
         self.ent_url.bind("<FocusIn>", self.clear_url_placeholder)
         self.ent_url.bind("<FocusOut>", self.add_url_placeholder)
         self.ent_url.bind("<Return>", lambda e: self.analyze_video())
-        btn_paste = ttk.Button(frm_search, text="📋", style="Icon.TButton", command=self.paste_url)
-        btn_paste.pack(side=tk.LEFT, padx=SPACING["sm"], pady=SPACING["sm"])
+        btn_paste = ttk.Button(frm_search, text="📋", bootstyle="secondary", command=self.paste_url)
+        btn_paste.pack(side=tk.LEFT, padx=5, pady=5)
         CreateToolTip(btn_paste, self.ui_strings["paste_tooltip"])
-        self.btn_analyze = ttk.Button(frm_search, text=self.ui_strings["analyze"], style="Accent.TButton", command=self.analyze_video)
-        self.btn_analyze.pack(side=tk.LEFT, padx=SPACING["sm"], pady=SPACING["sm"])
+        self.btn_analyze = ttk.Button(frm_search, text=self.ui_strings["analyze"], bootstyle="primary", command=self.analyze_video)
+        self.btn_analyze.pack(side=tk.LEFT, padx=5, pady=5)
         CreateToolTip(self.btn_analyze, self.ui_strings["analyze_tooltip"])
         frm_status = ttk.Frame(self.frm_analyze)
         frm_status.pack(fill=tk.X, padx=5, pady=(0,5))
-        self.lbl_analyze_info = ttk.Label(frm_status, text="", foreground=self.colors["text_tertiary"])
+        self.lbl_analyze_info = ttk.Label(frm_status, text="", foreground="#aaa")
         self.lbl_analyze_info.pack(side=tk.LEFT, padx=5, pady=5)
         self.analyze_progress = ttk.Progressbar(
             frm_status,
@@ -812,25 +814,26 @@ class YoutubeDownloaderApp(ttk.Window):
         self.btn_choose_folder = ttk.Button(
             self.frm_download,
             text=self.ui_strings["choose_folder"],
+            bootstyle="secondary",
             command=self.choose_download_folder
         )
-        self.btn_choose_folder.grid(row=1, column=0, padx=SPACING["sm"], pady=SPACING["sm"], sticky=tk.W)
+        self.btn_choose_folder.grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
         CreateToolTip(self.btn_choose_folder, self.ui_strings["choose_folder_tooltip"])
         btn_frame = ttk.Frame(self.frm_download)
-        btn_frame.grid(row=1, column=2, columnspan=2, sticky=tk.E, padx=SPACING["sm"], pady=SPACING["sm"])
+        btn_frame.grid(row=1, column=2, columnspan=2, sticky=tk.E, padx=5, pady=5)
         self.btn_cancel = ttk.Button(
             btn_frame,
             text=self.ui_strings["cancel"],
-            style="DangerOutline.TButton",
+            bootstyle="danger-outline",
             command=self.cancel_download,
             state="disabled"
         )
-        self.btn_cancel.pack(side=tk.LEFT, padx=(0, SPACING["sm"]))
+        self.btn_cancel.pack(side=tk.LEFT, padx=(0,5))
         CreateToolTip(self.btn_cancel, self.ui_strings["cancel_tooltip"])
         self.btn_download = ttk.Button(
             btn_frame,
             text=self.ui_strings["download_button"],
-            style="Success.TButton",
+            bootstyle="success",
             command=self.download_video
         )
         self.btn_download.pack(side=tk.LEFT)
@@ -838,7 +841,8 @@ class YoutubeDownloaderApp(ttk.Window):
         self.chk_open_folder = ttk.Checkbutton(
             self.frm_download,
             text=self.ui_strings["open_folder_after_download"],
-            variable=self.open_folder_var
+            variable=self.open_folder_var,
+            bootstyle="round-toggle"
         )
         self.chk_open_folder.grid(row=2, column=0, columnspan=4, sticky=tk.W, padx=5, pady=5)
         self.progress_bar = ttk.Progressbar(
@@ -851,12 +855,12 @@ class YoutubeDownloaderApp(ttk.Window):
         self.progress_bar.grid(row=3, column=0, columnspan=4, pady=10, sticky="we")
         status_frame = ttk.Frame(self.frm_download)
         status_frame.grid(row=4, column=0, columnspan=4, sticky="we", pady=5)
-        self.lbl_status = ttk.Label(status_frame, textvariable=self.status_var, foreground=self.colors["text_tertiary"])
+        self.lbl_status = ttk.Label(status_frame, textvariable=self.status_var, foreground="#aaa")
         self.lbl_status.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.btn_reencode = ttk.Button(
             status_frame,
             text=self.ui_strings["reencode_mp4"],
-            style="Accent.TButton",
+            bootstyle="primary",
             command=self.reencode_mp4
         )
         self.btn_reencode.pack_forget()
@@ -871,7 +875,7 @@ class YoutubeDownloaderApp(ttk.Window):
         self.ent_search = ttk.Entry(search_frame, textvariable=self.search_var)
         self.ent_search.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
         self.ent_search.bind("<KeyRelease>", self.update_history_view)
-        self.lbl_copy_feedback = ttk.Label(search_frame, text="", foreground=self.colors["success"])
+        self.lbl_copy_feedback = ttk.Label(search_frame, text="", foreground="#28a745")
         self.lbl_copy_feedback.pack(side=tk.RIGHT, padx=5)
         container_frame = ttk.Frame(self.tab_history)
         container_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -896,10 +900,10 @@ class YoutubeDownloaderApp(ttk.Window):
         self.btn_clear_history = ttk.Button(
             self.tab_history,
             text=self.ui_strings["clear_history"],
-            style="Danger.TButton",
+            bootstyle="danger",
             command=self.clear_history
         )
-        self.btn_clear_history.pack(pady=SPACING["sm"])
+        self.btn_clear_history.pack(pady=5)
         self.update_history_view()
 
     def build_conversion_tab(self):
@@ -927,14 +931,15 @@ class YoutubeDownloaderApp(ttk.Window):
         self.btn_choose_file = ttk.Button(
             file_import_frame,
             text=self.ui_strings["choose_file"],
+            bootstyle="secondary",
             command=self.choose_conversion_file
         )
-        self.btn_choose_file.grid(row=0, column=0, sticky="w", padx=(0, SPACING["md"]), pady=SPACING["sm"])
+        self.btn_choose_file.grid(row=0, column=0, sticky="w", padx=(0,10), pady=5)
         CreateToolTip(self.btn_choose_file, self.ui_strings["choose_file"])
         self.lbl_selected_file = ttk.Label(
             file_import_frame,
             text="",
-            foreground=self.colors["text_secondary"]
+            foreground=self.style.colors.get("secondary")
         )
         self.lbl_selected_file.grid(row=0, column=1, sticky="w", pady=5)
         info_frame = ttk.Frame(file_import_frame)
@@ -1025,9 +1030,9 @@ class YoutubeDownloaderApp(ttk.Window):
                                                        variable=self.conversion_progress_val)
         self.progress_bar_conversion.grid(row=0, column=0, sticky="ew", padx=5, pady=(0,5))
         progress_frame.columnconfigure(0, weight=1)
-        self.lbl_conversion_status = ttk.Label(progress_frame, text="", foreground=self.colors["accent"])
+        self.lbl_conversion_status = ttk.Label(progress_frame, text="", foreground=self.style.colors.get("info"))
         self.lbl_conversion_status.grid(row=1, column=0, sticky="w", padx=5)
-        self.lbl_estimated_size = ttk.Label(progress_frame, text=self.ui_strings["estimated_size"] + " N/A", foreground=self.colors["accent"])
+        self.lbl_estimated_size = ttk.Label(progress_frame, text=self.ui_strings["estimated_size"] + " N/A", foreground=self.style.colors.get("info"))
         self.lbl_estimated_size.grid(row=2, column=0, sticky="w", padx=5)
         # Boutons de contrôle de conversion (inversion de l'ordre)
         control_frame = ttk.Frame(export_frame)
@@ -1035,16 +1040,16 @@ class YoutubeDownloaderApp(ttk.Window):
         # D'abord le bouton "Démarrer la conversion"
         self.btn_start_conversion = ttk.Button(control_frame,
                                                  text=self.ui_strings["start_conversion"],
-                                                 style="Success.TButton",
+                                                 bootstyle="success",
                                                  command=self.start_conversion)
-        self.btn_start_conversion.pack(side=tk.RIGHT, padx=SPACING["sm"], pady=SPACING["sm"])
+        self.btn_start_conversion.pack(side=tk.RIGHT, padx=5, pady=5)
         # Puis le bouton "Annuler"
         self.btn_cancel_conversion = ttk.Button(control_frame,
                                                   text=self.ui_strings["cancel"],
-                                                  style="DangerOutline.TButton",
+                                                  bootstyle="danger-outline",
                                                   command=self.cancel_conversion,
                                                   state="disabled")
-        self.btn_cancel_conversion.pack(side=tk.RIGHT, padx=SPACING["sm"], pady=SPACING["sm"])
+        self.btn_cancel_conversion.pack(side=tk.RIGHT, padx=5, pady=5)
 
     def clear_url_placeholder(self, event):
         if self.url_var.get() == self.url_placeholder:
@@ -1595,21 +1600,23 @@ class YoutubeDownloaderApp(ttk.Window):
             lbl_thumbnail.pack(side=tk.LEFT, padx=(0,10))
             text_frame = ttk.Frame(item_frame)
             text_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
-            lbl_title = ttk.Label(text_frame, text=f"{title}", font=(self.theme.font_family, 12, "bold"))
+            lbl_title = ttk.Label(text_frame, text=f"{title}", font=("Helvetica", 12, "bold"))
             lbl_title.pack(anchor=tk.W)
-            lbl_url = ttk.Label(text_frame, text=f"{url}", font=(self.theme.font_family, 10), foreground=self.colors["text_secondary"])
+            lbl_url = ttk.Label(text_frame, text=f"{url}", font=("Helvetica", 10), foreground="#555")
             lbl_url.pack(anchor=tk.W)
-            lbl_date = ttk.Label(text_frame, text=f"{date}", font=(self.theme.font_family, 10), foreground=self.colors["text_tertiary"])
+            lbl_date = ttk.Label(text_frame, text=f"{date}", font=("Helvetica", 10), foreground="#888")
             lbl_date.pack(anchor=tk.W)
             item_frame.bind("<Double-1>", lambda event, url=url: self.on_history_item_double_click(url))
             for child in item_frame.winfo_children():
                 child.bind("<Double-1>", lambda event, url=url: self.on_history_item_double_click(url))
             btn_frame = ttk.Frame(item_frame)
-            btn_frame.pack(side=tk.RIGHT, padx=SPACING["sm"])
+            btn_frame.pack(side=tk.RIGHT, padx=5)
             btn_copy = ttk.Button(
                 btn_frame,
                 text="📋",
-                style="Icon.TButton",
+                bootstyle="flat",
+                style="History.TButton",
+                padding=2,
                 command=lambda url=url: self.copy_history_url(url)
             )
             CreateToolTip(btn_copy, self.ui_strings["copy_url"])
@@ -1617,7 +1624,9 @@ class YoutubeDownloaderApp(ttk.Window):
             btn_delete = ttk.Button(
                 btn_frame,
                 text="🗑",
-                style="Icon.TButton",
+                bootstyle="flat",
+                style="History.TButton",
+                padding=2,
                 command=lambda u=url: self.delete_history_item(u)
             )
             CreateToolTip(btn_delete, self.ui_strings["delete"])
