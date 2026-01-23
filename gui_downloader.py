@@ -1910,13 +1910,21 @@ class YoutubeDownloaderApp(ttk.Window):
                 cmd.extend(["-movflags", "faststart"])
         elif output_format.lower() in ["mp3", "ogg", "wav"]:
             cmd.append("-vn")
-            cmd.extend(["-c:a", self.audio_encoder_var.get()])
+            # Sélection automatique du codec audio compatible avec le format de sortie
+            audio_codec_map = {
+                "mp3": "libmp3lame",
+                "ogg": "libvorbis",
+                "wav": "pcm_s16le"
+            }
+            audio_codec = audio_codec_map.get(output_format.lower(), self.audio_encoder_var.get())
+            cmd.extend(["-c:a", audio_codec])
             channels = self.audio_channels_var.get()
             if channels == "Mono":
                 cmd.extend(["-ac", "1"])
             elif channels == "Stereo":
                 cmd.extend(["-ac", "2"])
-            cmd.extend(["-b:a", self.audio_bitrate_var.get()])
+            if output_format.lower() != "wav":
+                cmd.extend(["-b:a", self.audio_bitrate_var.get()])
             if self.audio_sample_rate_var.get() != "44100":
                 cmd.extend(["-ar", self.audio_sample_rate_var.get()])
         cmd.append(self.conversion_output_file)
