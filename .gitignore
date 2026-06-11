@@ -1,2 +1,8 @@
 .osgrep
 __pycache__/
+.venv/
+.DS_Store
+.claude/
+history.json
+ViDL.app/
+build/

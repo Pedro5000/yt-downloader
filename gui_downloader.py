@@ -7,12 +7,12 @@ ViDL – Téléchargeur YouTube / YouTube Downloader
 import os
 import re
 import sys
+import shutil
 import subprocess
 import threading
 import platform
 import io
 import json
-import time
 import datetime
 import requests
 from PIL import Image, ImageTk, ImageDraw, ImageFont
@@ -575,7 +575,13 @@ class YoutubeDownloaderApp(ttk.Window):
 
         self.history = []
         self.history_images = {}
-        self.history_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "history.json")
+        app_support_dir = os.path.join(os.path.expanduser("~"), "Library", "Application Support", "ViDL")
+        os.makedirs(app_support_dir, exist_ok=True)
+        self.history_file = os.path.join(app_support_dir, "history.json")
+        # Migration : déplace l'ancien historique stocké dans le dossier du projet
+        legacy_history = os.path.join(os.path.dirname(os.path.abspath(__file__)), "history.json")
+        if not os.path.exists(self.history_file) and os.path.exists(legacy_history):
+            shutil.move(legacy_history, self.history_file)
         self.load_history()
 
         # Variables pour les options d'export et avancées
@@ -1430,18 +1436,13 @@ class YoutubeDownloaderApp(ttk.Window):
             self.progress_val.set(100)
             self.progress_bar.configure(style=self.progress_style_success)
             file_size_msg = ""
-            if self.downloaded_file_path:
-                timeout = 3.0
-                start_time = time.time()
-                while not os.path.exists(self.downloaded_file_path) and time.time() - start_time < timeout:
-                    time.sleep(0.1)
-                if os.path.exists(self.downloaded_file_path):
-                    try:
-                        size_bytes = os.path.getsize(self.downloaded_file_path)
-                        size_mb = size_bytes / (1024 * 1024)
-                        file_size_msg = f" ({size_mb:.1f} MB)"
-                    except Exception as e:
-                        print("Error getting file size:", e)
+            if self.downloaded_file_path and os.path.exists(self.downloaded_file_path):
+                try:
+                    size_bytes = os.path.getsize(self.downloaded_file_path)
+                    size_mb = size_bytes / (1024 * 1024)
+                    file_size_msg = f" ({size_mb:.1f} MB)"
+                except Exception as e:
+                    print("Error getting file size:", e)
             if self.downloaded_file_path and self.export_type_var.get() == "mp4":
                 self.status_var.set(f"{self.ui_strings['download_complete']}{file_size_msg}. {self.ui_strings['mp4_optimize']}")
                 self.btn_reencode.pack(side=tk.RIGHT)
@@ -1685,9 +1686,9 @@ class YoutubeDownloaderApp(ttk.Window):
             messagebox.showerror("Error", "Aucune miniature disponible." if self.language=="fr" else "No thumbnail available.")
             return
         try:
-            response = requests.get(thumb_url, stream=True)
+            response = requests.get(thumb_url, timeout=10)
             response.raise_for_status()
-            ext = os.path.splitext(thumb_url)[1]
+            ext = os.path.splitext(thumb_url.split("?")[0])[1]
             if not ext:
                 ext = ".jpg"
             title = self.current_video_info.get("title", "thumbnail")
