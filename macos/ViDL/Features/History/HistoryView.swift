@@ -1,11 +1,15 @@
 import SwiftUI
 
+enum HistorySort { case recent, oldest, title }
+
 struct HistoryView: View {
     @Environment(AppState.self) private var app
     @Environment(HistoryStore.self) private var history
     @State private var search = ""
     @State private var copiedFeedback = false
     @State private var showClearConfirm = false
+    @State private var sortMode: HistorySort = .recent
+    @State private var recentlyDeleted: HistoryEntry?
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -25,18 +29,31 @@ struct HistoryView: View {
                     }
                 }
                 HStack(spacing: 10) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.white.opacity(0.4))
-                    TextField(app.tr("Rechercher…", "Search…"), text: $search)
-                        .textFieldStyle(.plain).font(.rounded(13)).foregroundStyle(.white)
-                        .focused($searchFocused)
+                    HStack(spacing: 10) {
+                        Image(systemName: "magnifyingglass").foregroundStyle(.white.opacity(0.4))
+                        TextField(app.tr("Rechercher…", "Search…"), text: $search)
+                            .textFieldStyle(.plain).font(.rounded(13)).foregroundStyle(.white)
+                            .focused($searchFocused)
+                    }
+                    .fieldBackground(focused: searchFocused)
+
+                    Picker("", selection: $sortMode) {
+                        Text(app.tr("Récents", "Recent")).tag(HistorySort.recent)
+                        Text(app.tr("Anciens", "Oldest")).tag(HistorySort.oldest)
+                        Text(app.tr("Titre", "Title")).tag(HistorySort.title)
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .fixedSize()
+                    .tint(.white.opacity(0.7))
+                    .accessibilityLabel(app.tr("Trier", "Sort"))
                 }
-                .fieldBackground(focused: searchFocused)
             }
             .padding(.horizontal, 28)
             .padding(.top, 28)
             .padding(.bottom, 16)
 
-            let items = history.filtered(search)
+            let items = sorted(history.filtered(search))
             if items.isEmpty {
                 emptyState
             } else {
@@ -50,6 +67,20 @@ struct HistoryView: View {
                     .padding(.bottom, 20)
                 }
                 .scrollContentBackground(.hidden)
+            }
+
+            if let deleted = recentlyDeleted {
+                HStack(spacing: 10) {
+                    Image(systemName: "trash").foregroundStyle(.white.opacity(0.6))
+                    Text(app.tr("« \(deleted.title) » supprimé", "“\(deleted.title)” deleted"))
+                        .font(.rounded(12, .medium)).foregroundStyle(.white.opacity(0.75)).lineLimit(1)
+                    Spacer()
+                    Button(app.tr("Annuler", "Undo")) { undoDelete() }
+                        .buttonStyle(GhostButtonStyle(tint: Theme.accent))
+                }
+                .padding(.horizontal, 28)
+                .padding(.vertical, 10)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
             if !history.entries.isEmpty {
@@ -71,6 +102,30 @@ struct HistoryView: View {
             Button(app.tr("Effacer", "Clear"), role: .destructive) { history.clear() }
             Button(app.tr("Annuler", "Cancel"), role: .cancel) {}
         }
+    }
+
+    private func sorted(_ items: [HistoryEntry]) -> [HistoryEntry] {
+        switch sortMode {
+        case .recent: return items.sorted { $0.downloadDate > $1.downloadDate }
+        case .oldest: return items.sorted { $0.downloadDate < $1.downloadDate }
+        case .title:  return items.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        }
+    }
+
+    private func delete(_ entry: HistoryEntry) {
+        history.delete(entry)
+        withAnimation { recentlyDeleted = entry }
+        let id = entry.id
+        Task {
+            try? await Task.sleep(for: .seconds(6))
+            if recentlyDeleted?.id == id { withAnimation { recentlyDeleted = nil } }
+        }
+    }
+
+    private func undoDelete() {
+        guard let entry = recentlyDeleted else { return }
+        history.restore(entry)
+        withAnimation { recentlyDeleted = nil }
     }
 
     private var emptyState: some View {
@@ -119,7 +174,7 @@ struct HistoryView: View {
                     .help(app.tr("Copier l'URL", "Copy URL"))
                     .accessibilityLabel(app.tr("Copier l'URL", "Copy URL"))
                 Button {
-                    history.delete(entry)
+                    delete(entry)
                 } label: { Image(systemName: "trash") }
                     .buttonStyle(IconButtonStyle())
                     .help(app.tr("Supprimer", "Delete"))

@@ -57,10 +57,17 @@ final class HistoryStore {
         save()
     }
 
+    /// Re-inserts a previously deleted entry as-is (bypasses add()'s de-duplication).
+    func restore(_ entry: HistoryEntry) {
+        guard !entries.contains(where: { $0.id == entry.id }) else { return }
+        entries.append(entry)
+        save()
+    }
+
+    /// Filters by query, in stored (insertion) order — the view applies the chosen sort.
     func filtered(_ query: String) -> [HistoryEntry] {
         let q = query.lowercased()
-        let list = entries.reversed()
-        if q.isEmpty { return Array(list) }
-        return list.filter { $0.title.lowercased().contains(q) || $0.url.lowercased().contains(q) }
+        if q.isEmpty { return entries }
+        return entries.filter { $0.title.lowercased().contains(q) || $0.url.lowercased().contains(q) }
     }
 }
