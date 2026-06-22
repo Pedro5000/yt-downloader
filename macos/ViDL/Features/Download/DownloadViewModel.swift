@@ -345,10 +345,11 @@ final class DownloadViewModel {
             displayProgress = 0
         }
 
-        var (result, ageRestricted, infoJSON, error) = await YTDLPService.analyze(url: trimmed)
+        let includeAll = settings?.includeAllFormats ?? false
+        var (result, ageRestricted, infoJSON, error) = await YTDLPService.analyze(url: trimmed, includeAllFormats: includeAll)
         var usedCookies = false
         if result == nil && ageRestricted, let browser = settings?.cookiesBrowser.ytDlpValue {
-            (result, _, infoJSON, error) = await YTDLPService.analyze(url: trimmed, cookiesBrowser: browser)
+            (result, _, infoJSON, error) = await YTDLPService.analyze(url: trimmed, cookiesBrowser: browser, includeAllFormats: includeAll)
             usedCookies = true
         }
 
@@ -445,7 +446,9 @@ final class DownloadViewModel {
         // in the filename: "<title>_vidl_@handle.ext".
         let handle = Formatting.sanitizeFilename(meta?.channelHandle ?? "")
         let base = handle.isEmpty ? stem + "_vidl" : stem + "_vidl_" + handle
-        let ext = exportType == .mp4 ? "mp4" : "mp3"
+        // VP9/AV1 video formats are exported as MKV; everything else as MP4.
+        let chosenContainer = videoFormats.first(where: { $0.id == selectedVideoFormatID })?.container ?? "mp4"
+        let ext = exportType == .mp4 ? chosenContainer : "mp3"
         let outputPath = uniquePath(dir: outputDirPath, base: base, ext: ext)
 
         var clipSection: String?
@@ -472,7 +475,8 @@ final class DownloadViewModel {
         func buildArgs(cookiesBrowser: String?, infoJSONPath: String?) -> [String] {
             YTDLPService.downloadArguments(url: trimmed, formatID: formatID,
                                            exportType: exportType, audioLanguage: audioLanguage,
-                                           mp3Bitrate: mp3Bitrate, outputPath: outputPath,
+                                           mp3Bitrate: mp3Bitrate, mergeContainer: chosenContainer,
+                                           outputPath: outputPath,
                                            cookiesBrowser: cookiesBrowser, infoJSONPath: infoJSONPath,
                                            downloadSection: clipSection, forceKeyframes: clipPreciseCut)
         }

@@ -77,7 +77,7 @@ enum YTDLPService {
     }
 
     /// Runs a single `yt-dlp -j` call and builds the format lists from the JSON `formats` array.
-    static func analyze(url: String, cookiesBrowser: String? = nil) async -> (result: AnalysisResult?, ageRestricted: Bool, infoJSON: String?, error: AnalyzeError?) {
+    static func analyze(url: String, cookiesBrowser: String? = nil, includeAllFormats: Bool = false) async -> (result: AnalysisResult?, ageRestricted: Bool, infoJSON: String?, error: AnalyzeError?) {
         guard let ytDlp = BinaryLocator.ytDlp else { return (nil, false, nil, .other("")) }
         var args = ["-j", "--no-warnings", "--no-playlist"]
         if let cookiesBrowser { args += ["--cookies-from-browser", cookiesBrowser] }
@@ -112,11 +112,11 @@ enum YTDLPService {
         meta.duration = info.duration
         meta.thumbnailURL = info.thumbnail
 
-        let (videoFormats, audioFormats) = buildFormats(info.formats ?? [])
+        let (videoFormats, audioFormats) = buildFormats(info.formats ?? [], includeAllFormats: includeAllFormats)
         return (AnalysisResult(meta: meta, videoFormats: videoFormats, audioFormats: audioFormats), false, res.stdout, nil)
     }
 
-    private static func buildFormats(_ formats: [RawFormat]) -> ([VideoFormat], [AudioFormat]) {
+    private static func buildFormats(_ formats: [RawFormat], includeAllFormats: Bool) -> ([VideoFormat], [AudioFormat]) {
         var audioOnly: [AudioFormat] = []
         // We pick "best audio" for video+audio combos in Auto mode. YouTube increasingly
         // ships AI dubs (often at higher bitrate than the original), so picking purely on
@@ -128,9 +128,14 @@ enum YTDLPService {
         var bestAudioAnyOriginal: (id: String, abr: Int)? = nil
         var bestAudioAnyAny: (id: String, abr: Int)? = nil
 
-        // (w, h, fps) -> best tbr
-        var muxed: [Key: (id: String, tbr: Int)] = [:]
-        var videoOnly: [Key: (id: String, tbr: Int)] = [:]
+        // (w, h, fps) -> best (id, tbr, isMP4). Prefer MP4 over an equal-resolution WebM.
+        var muxed: [Key: (id: String, tbr: Int, mp4: Bool)] = [:]
+        var videoOnly: [Key: (id: String, tbr: Int, mp4: Bool)] = [:]
+        func better(_ newTBR: Int, _ newMP4: Bool, than cur: (id: String, tbr: Int, mp4: Bool)?) -> Bool {
+            guard let cur else { return true }
+            if newMP4 != cur.mp4 { return newMP4 }   // MP4 wins at equal resolution
+            return newTBR > cur.tbr
+        }
 
         for f in formats {
             let ext = (f.ext ?? "").lowercased()
@@ -165,13 +170,15 @@ enum YTDLPService {
                     bestAudioAnyOriginal = (f.format_id, abr)
                 }
             } else if hasVideo {
-                guard ext == "mp4", let w = f.width, let h = f.height else { continue }
+                let isMP4 = (ext == "mp4")
+                guard ext == "mp4" || (includeAllFormats && (ext == "webm" || ext == "mkv")),
+                      let w = f.width, let h = f.height else { continue }
                 let fps = Int((f.fps ?? 30).rounded())
                 let key = Key(w: w, h: h, fps: fps)
                 if hasAudio {
-                    if let cur = muxed[key], cur.tbr >= tbr { } else { muxed[key] = (f.format_id, tbr) }
+                    if better(tbr, isMP4, than: muxed[key]) { muxed[key] = (f.format_id, tbr, isMP4) }
                 } else {
-                    if let cur = videoOnly[key], cur.tbr >= tbr { } else { videoOnly[key] = (f.format_id, tbr) }
+                    if better(tbr, isMP4, than: videoOnly[key]) { videoOnly[key] = (f.format_id, tbr, isMP4) }
                 }
             }
         }
@@ -190,15 +197,18 @@ enum YTDLPService {
             let vid = videoOnly[key]
             var chosenID: String? = mux?.id
             var chosenTBR = mux?.tbr ?? 0
+            var chosenMP4 = mux?.mp4 ?? true
             if let vid, let audio = bestAudio {
                 let comboTBR = vid.tbr + audio.abr
                 if comboTBR > chosenTBR {
                     chosenID = "\(vid.id)+\(audio.id)"
                     chosenTBR = comboTBR
+                    chosenMP4 = vid.mp4
                 }
             }
             if let id = chosenID {
-                result.append(VideoFormat(id: id, width: key.w, height: key.h, fps: key.fps, tbr: chosenTBR))
+                result.append(VideoFormat(id: id, width: key.w, height: key.h, fps: key.fps,
+                                          tbr: chosenTBR, container: chosenMP4 ? "mp4" : "mkv"))
             }
         }
         return (result, audioOnly)
@@ -215,6 +225,7 @@ enum YTDLPService {
                                   exportType: ExportType,
                                   audioLanguage: String,
                                   mp3Bitrate: String,
+                                  mergeContainer: String = "mp4",
                                   outputPath: String,
                                   cookiesBrowser: String?,
                                   infoJSONPath: String? = nil,
@@ -225,13 +236,13 @@ enum YTDLPService {
 
         if exportType == .mp4 {
             if isAuto {
-                args = ["-f", formatID, "--merge-output-format", "mp4"]
+                args = ["-f", formatID, "--merge-output-format", mergeContainer]
             } else if formatID.contains("+") {
                 let vid = formatID.split(separator: "+").first.map(String.init) ?? formatID
                 let expr = "\(vid)+ba[language^=\(audioLanguage)]/(bestvideo+bestaudio/b)"
-                args = ["-f", expr, "--merge-output-format", "mp4", "-S", "lang:\(audioLanguage)"]
+                args = ["-f", expr, "--merge-output-format", mergeContainer, "-S", "lang:\(audioLanguage)"]
             } else {
-                args = ["-f", formatID, "--merge-output-format", "mp4", "-S", "lang:\(audioLanguage)"]
+                args = ["-f", formatID, "--merge-output-format", mergeContainer, "-S", "lang:\(audioLanguage)"]
             }
         } else {
             // MP3: always take the best available audio (optionally for a given language)

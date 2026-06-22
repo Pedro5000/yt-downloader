@@ -18,6 +18,7 @@ struct VideoFormat: Identifiable, Hashable {
     let height: Int
     let fps: Int
     let tbr: Int            // total bitrate, kbps
+    var container: String = "mp4"   // output container: "mp4", or "mkv" for VP9/AV1
 }
 
 struct AudioFormat: Identifiable, Hashable {

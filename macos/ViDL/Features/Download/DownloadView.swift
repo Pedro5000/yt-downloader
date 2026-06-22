@@ -400,6 +400,7 @@ struct DownloadView: View {
             let mb = Double(f.tbr) * d / 8192
             s += String(format: " · ~%.0f MB", mb)
         }
+        if f.container != "mp4" { s += " · \(f.container.uppercased())" }
         return s
     }
 }

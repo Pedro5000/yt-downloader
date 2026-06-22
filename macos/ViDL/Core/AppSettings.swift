@@ -29,10 +29,15 @@ final class AppSettings {
     var cookiesBrowser: CookiesBrowser {
         didSet { UserDefaults.standard.set(cookiesBrowser.rawValue, forKey: "cookiesBrowser") }
     }
+    /// Include VP9/AV1 (WebM) video formats — often the only 1440p/4K — exported as MKV.
+    var includeAllFormats: Bool {
+        didSet { UserDefaults.standard.set(includeAllFormats, forKey: "includeAllFormats") }
+    }
 
     init() {
         let saved = UserDefaults.standard.string(forKey: "cookiesBrowser")
         // Default to Firefox to preserve the previous hard-coded behavior.
         self.cookiesBrowser = CookiesBrowser(rawValue: saved ?? "firefox") ?? .firefox
+        self.includeAllFormats = UserDefaults.standard.bool(forKey: "includeAllFormats")
     }
 }
