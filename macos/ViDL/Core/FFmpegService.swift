@@ -95,9 +95,32 @@ enum FFmpegService {
 
     // MARK: - Command building
 
-    static func conversionArguments(input: String, output: String, settings s: ConversionSettings) -> [String] {
-        var args = ["-i", input]
+    /// True when the output is just a container change the source streams can be copied
+    /// into (no resolution/framerate change, compatible codecs) → lossless `-c copy`.
+    static func canRemux(_ s: ConversionSettings, _ info: MediaFileInfo?) -> Bool {
+        guard let info, s.resolution == "Original", s.videoFramerate == "Original" else { return false }
+        let v = info.videoCodec.lowercased()
+        let a = info.audioCodec.lowercased()
+        func has(_ value: String, _ set: Set<String>) -> Bool { set.contains { value.contains($0) } }
+        switch s.outputFormat.lowercased() {
+        case "mkv": return true   // Matroska holds essentially any codec
+        case "mp4", "mov", "m4v":
+            return has(v, ["h264", "avc", "hevc", "h265", "hev", "av1", "av01", "mpeg4", "mp4v"])
+                && has(a, ["aac", "mp4a", "mp3", "alac", "ac3"])
+        default: return false     // avi/flv/wmv and audio-only outputs: re-encode
+        }
+    }
+
+    static func conversionArguments(input: String, output: String, settings s: ConversionSettings,
+                                    sourceInfo: MediaFileInfo? = nil) -> [String] {
         let fmt = s.outputFormat.lowercased()
+        if canRemux(s, sourceInfo) {
+            var args = ["-i", input, "-c", "copy"]
+            if fmt == "mp4" { args += ["-movflags", "faststart"] }
+            args.append(output)
+            return args
+        }
+        var args = ["-i", input]
         let videoFormats: Set<String> = ["mp4", "mkv", "avi", "mov", "flv", "wmv"]
         let audioFormats: Set<String> = ["mp3", "ogg", "wav"]
 

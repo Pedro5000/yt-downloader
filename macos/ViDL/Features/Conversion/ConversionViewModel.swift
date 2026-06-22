@@ -128,12 +128,14 @@ final class ConversionViewModel {
         progress = 0
         estimatedSize = "N/A"
         producedFile = nil
-        statusText = tr("Conversion en cours…", "Converting…")
+        let willRemux = FFmpegService.canRemux(settings, fileInfo)
+        statusText = willRemux ? tr("Remux (copie sans perte)…", "Remuxing (lossless copy)…")
+                               : tr("Conversion en cours…", "Converting…")
         converting = true
         cancelled = false
         ffmpegTail = []
 
-        let args = FFmpegService.conversionArguments(input: input, output: output, settings: settings)
+        let args = FFmpegService.conversionArguments(input: input, output: output, settings: settings, sourceInfo: fileInfo)
         let proc = ManagedProcess()
         activeProcess = proc
         let status = await proc.stream(executable: ffmpeg, arguments: args) { [weak self] line in
