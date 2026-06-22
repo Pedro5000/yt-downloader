@@ -335,16 +335,18 @@ final class DownloadViewModel {
             displayProgress = 0
         }
 
-        var (result, ageRestricted, infoJSON) = await YTDLPService.analyze(url: trimmed)
+        var (result, ageRestricted, infoJSON, error) = await YTDLPService.analyze(url: trimmed)
         var usedCookies = false
         if result == nil && ageRestricted, let browser = settings?.cookiesBrowser.ytDlpValue {
-            (result, _, infoJSON) = await YTDLPService.analyze(url: trimmed, cookiesBrowser: browser)
+            (result, _, infoJSON, error) = await YTDLPService.analyze(url: trimmed, cookiesBrowser: browser)
             usedCookies = true
         }
 
         analyzing = false
         guard let result else {
-            analysisInfo = tr("Aucun format exploitable trouvé.", "No usable formats found.")
+            let msg = analyzeErrorText(error)
+            analysisInfo = msg       // stays visible after the alert is dismissed
+            errorMessage = msg       // surfaces the real cause instead of a vague grey line
             return
         }
         meta = result.meta
@@ -373,6 +375,27 @@ final class DownloadViewModel {
             if h == 720 { chosen = f.id }
         }
         selectedVideoFormatID = chosen
+    }
+
+    private func analyzeErrorText(_ error: AnalyzeError?) -> String {
+        switch error {
+        case .ageRestricted:
+            return tr("Vidéo avec restriction d'âge. Choisissez un navigateur connecté à YouTube dans les Réglages.",
+                      "Age-restricted video. Pick a browser signed into YouTube in Settings.")
+        case .privateVideo:    return tr("Vidéo privée.", "Private video.")
+        case .membersOnly:     return tr("Vidéo réservée aux membres.", "Members-only video.")
+        case .unavailable:     return tr("Vidéo indisponible ou supprimée.", "Video unavailable or removed.")
+        case .geoBlocked:      return tr("Vidéo non disponible dans votre pays.", "Video not available in your country.")
+        case .notFound:        return tr("Vidéo introuvable (404).", "Video not found (404).")
+        case .network:         return tr("Problème de connexion réseau.", "Network connection problem.")
+        case .unsupportedURL:  return tr("URL non prise en charge.", "Unsupported URL.")
+        case .notYetAvailable: return tr("Vidéo pas encore disponible (première ou live programmé).",
+                                         "Video not available yet (premiere or scheduled live).")
+        case .signInRequired:  return tr("Connexion requise. Choisissez un navigateur pour les cookies dans les Réglages.",
+                                         "Sign-in required. Pick a cookies browser in Settings.")
+        case .other(let msg) where !msg.isEmpty: return msg
+        default:               return tr("Aucun format exploitable trouvé.", "No usable formats found.")
+        }
     }
 
     func onExportTypeChange() { selectDefaultFormat() }

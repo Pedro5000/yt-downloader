@@ -36,6 +36,7 @@ final class ConversionViewModel {
     private var duration: Double = 0
     private var activeProcess: ManagedProcess?
     private var cancelled = false
+    private var ffmpegTail: [String] = []   // rolling tail of ffmpeg output, for error reporting
 
     static let outputFormats = ["mp4", "mp3", "mkv", "avi", "mov", "flv", "wmv", "ogg", "wav"]
     static let qualities = ["Low", "Standard", "High", "Very High"]
@@ -119,12 +120,15 @@ final class ConversionViewModel {
         statusText = tr("Conversion en cours…", "Converting…")
         converting = true
         cancelled = false
+        ffmpegTail = []
 
         let args = FFmpegService.conversionArguments(input: input, output: output, settings: settings)
         let proc = ManagedProcess()
         activeProcess = proc
         let status = await proc.stream(executable: ffmpeg, arguments: args) { [weak self] line in
             guard let self else { return }
+            self.ffmpegTail.append(line)
+            if self.ffmpegTail.count > 20 { self.ffmpegTail.removeFirst(self.ffmpegTail.count - 20) }
             if self.duration > 0, let secs = FFmpegService.parseProgressSeconds(line) {
                 let pct = min(100, secs / self.duration * 100)
                 self.progress = pct
@@ -152,7 +156,19 @@ final class ConversionViewModel {
             if openWhenDone { revealOutput() }
         } else {
             statusText = tr("La conversion a échoué.", "Conversion failed.")
+            errorMessage = conversionErrorMessage()
         }
+    }
+
+    /// Pulls a meaningful reason from the tail of ffmpeg's output (it used to be dropped).
+    private func conversionErrorMessage() -> String {
+        let keywords = ["error", "invalid", "unable", "no such", "failed", "could not",
+                        "not found", "permission", "unsupported", "denied", "does not contain"]
+        let lines = ffmpegTail.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        if let hit = lines.last(where: { line in keywords.contains { line.lowercased().contains($0) } }) {
+            return hit
+        }
+        return lines.last ?? tr("La conversion a échoué (ffmpeg).", "Conversion failed (ffmpeg).")
     }
 
     func cancelConversion() {

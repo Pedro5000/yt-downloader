@@ -4,6 +4,13 @@ enum ExportType: String {
     case mp4, mp3
 }
 
+/// Classified reason an analysis failed, mapped to a localized message by the view model.
+enum AnalyzeError: Equatable {
+    case ageRestricted, privateVideo, membersOnly, unavailable, geoBlocked
+    case notFound, network, unsupportedURL, notYetAvailable, signInRequired
+    case other(String)   // raw cleaned yt-dlp message
+}
+
 enum YTDLPService {
 
     // MARK: - JSON decoding of `yt-dlp -j`
@@ -42,20 +49,47 @@ enum YTDLPService {
         return lower.contains("sign in to confirm") || lower.contains("age-restricted")
     }
 
+    /// Maps yt-dlp's combined output to a friendly, classified reason.
+    static func classify(_ combined: String) -> AnalyzeError {
+        let l = combined.lowercased()
+        func has(_ s: String) -> Bool { l.contains(s) }
+        if has("age-restricted") || has("confirm your age") { return .ageRestricted }
+        if has("private video") { return .privateVideo }
+        if has("members-only") || has("join this channel") { return .membersOnly }
+        if has("not available in your country") || has("blocked it in your country") || has("geo restrict") { return .geoBlocked }
+        if has("video unavailable") || has("this video is unavailable") || has("has been removed") || has("no longer available") { return .unavailable }
+        if has("http error 404") || has("404: not found") { return .notFound }
+        if has("unable to download webpage") || has("failed to resolve") || has("getaddrinfo")
+            || has("temporary failure in name resolution") || has("timed out") || has("network is unreachable")
+            || has("connection refused") || has("connection reset") { return .network }
+        if has("unsupported url") { return .unsupportedURL }
+        if has("premieres in") || has("live event will begin") || has("this live event") { return .notYetAvailable }
+        if has("sign in") || has("login required") || has("cookies") { return .signInRequired }
+        // Fall back to the last cleaned ERROR line.
+        if let line = combined.split(separator: "\n").last(where: { $0.contains("ERROR:") }) {
+            var msg = String(line)
+            if let r = msg.range(of: "ERROR:") { msg = String(msg[r.upperBound...]) }
+            if let r = msg.range(of: #"^\s*\[[^\]]+\]\s*[^:]*:\s*"#, options: .regularExpression) { msg.removeSubrange(r) }
+            msg = msg.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !msg.isEmpty { return .other(msg) }
+        }
+        return .other("")
+    }
+
     /// Runs a single `yt-dlp -j` call and builds the format lists from the JSON `formats` array.
-    static func analyze(url: String, cookiesBrowser: String? = nil) async -> (result: AnalysisResult?, ageRestricted: Bool, infoJSON: String?) {
-        guard let ytDlp = BinaryLocator.ytDlp else { return (nil, false, nil) }
+    static func analyze(url: String, cookiesBrowser: String? = nil) async -> (result: AnalysisResult?, ageRestricted: Bool, infoJSON: String?, error: AnalyzeError?) {
+        guard let ytDlp = BinaryLocator.ytDlp else { return (nil, false, nil, .other("")) }
         var args = ["-j", "--no-warnings", "--no-playlist"]
         if let cookiesBrowser { args += ["--cookies-from-browser", cookiesBrowser] }
         args.append(url)
 
         let res = await Shell.capture(ytDlp, args)
         if !res.succeeded {
-            return (nil, needsAgeRetry(res.combined), nil)
+            return (nil, needsAgeRetry(res.combined), nil, classify(res.combined))
         }
         guard let data = res.stdout.data(using: .utf8),
               let info = try? JSONDecoder().decode(RawInfo.self, from: data) else {
-            return (nil, false, nil)
+            return (nil, false, nil, .other(""))
         }
 
         var meta = VideoMeta()
@@ -79,7 +113,7 @@ enum YTDLPService {
         meta.thumbnailURL = info.thumbnail
 
         let (videoFormats, audioFormats) = buildFormats(info.formats ?? [])
-        return (AnalysisResult(meta: meta, videoFormats: videoFormats, audioFormats: audioFormats), false, res.stdout)
+        return (AnalysisResult(meta: meta, videoFormats: videoFormats, audioFormats: audioFormats), false, res.stdout, nil)
     }
 
     private static func buildFormats(_ formats: [RawFormat]) -> ([VideoFormat], [AudioFormat]) {
