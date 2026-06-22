@@ -30,7 +30,11 @@ struct SettingsView: View {
             HStack {
                 Label {
                     Text("yt-dlp")
-                    if let v = ytdlpVersion {
+                    if let r = updateResult {
+                        Text(r.text)
+                            .font(.caption)
+                            .foregroundStyle(r.ok ? Theme.success : Theme.danger)
+                    } else if let v = ytdlpVersion {
                         Text(v).foregroundStyle(.secondary).font(.system(.caption, design: .monospaced))
                     }
                 } icon: {
@@ -46,11 +50,6 @@ struct SettingsView: View {
                 } else {
                     installButton(["yt-dlp"])
                 }
-            }
-            if let r = updateResult {
-                Label(r.text, systemImage: r.ok ? "checkmark.circle" : "exclamationmark.triangle")
-                    .foregroundStyle(r.ok ? Theme.success : Theme.danger)
-                    .font(.callout)
             }
 
             HStack {
