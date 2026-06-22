@@ -38,6 +38,9 @@ struct SettingsView: View {
         .navigationTitle(app.tr("Réglages", "Settings"))
         .task { await loadVersion() }
         .task { notifStatus = await Notifier.authorizationStatus() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { notifStatus = await Notifier.authorizationStatus() }   // refresh on return from System Settings
+        }
     }
 
     // MARK: - Dependencies (status + update / install)

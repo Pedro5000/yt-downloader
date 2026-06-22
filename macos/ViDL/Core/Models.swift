@@ -103,6 +103,19 @@ enum Formatting {
         return String(format: "%02d:%02d", m, s)
     }
 
+    /// Parses "ss", "mm:ss" or "hh:mm:ss" into seconds.
+    static func seconds(_ s: String) -> Double? {
+        let parts = s.split(separator: ":").map { Double($0.trimmingCharacters(in: .whitespaces)) }
+        guard !parts.isEmpty, !parts.contains(where: { $0 == nil }) else { return nil }
+        let n = parts.compactMap { $0 }
+        switch n.count {
+        case 1: return n[0]
+        case 2: return n[0] * 60 + n[1]
+        case 3: return n[0] * 3600 + n[1] * 60 + n[2]
+        default: return nil
+        }
+    }
+
     static func count(_ value: Int?) -> String {
         guard let value else { return "N/A" }
         let f = NumberFormatter()

@@ -71,6 +71,19 @@ enum YTDLPService {
         return "@" + body
     }
 
+    /// A single playable stream URL (progressive MP4 or HLS) for in-app preview/scrubbing.
+    /// Low-res proxy; the real download still uses the chosen high-quality format.
+    static func previewURL(url: String, cookiesBrowser: String? = nil) async -> URL? {
+        guard let ytDlp = BinaryLocator.ytDlp else { return nil }
+        var args = ["-g", "-f", "best[ext=mp4][acodec!=none][vcodec!=none]/18/best", "--no-warnings", "--no-playlist"]
+        if let cookiesBrowser { args += ["--cookies-from-browser", cookiesBrowser] }
+        args.append(url)
+        let res = await Shell.capture(ytDlp, args)
+        guard let line = res.stdout.split(separator: "\n").first.map(String.init)?
+                .trimmingCharacters(in: .whitespacesAndNewlines), !line.isEmpty else { return nil }
+        return URL(string: line)
+    }
+
     /// Maps yt-dlp's combined output to a friendly, classified reason.
     static func classify(_ combined: String) -> AnalyzeError {
         let l = combined.lowercased()

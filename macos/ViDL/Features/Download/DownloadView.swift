@@ -10,6 +10,7 @@ struct DownloadView: View {
     @State private var depsRefresh = false
     @State private var clipboardSuggestion: String?
     @State private var dismissedClipboard: String?
+    @State private var showClipPreview = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -66,6 +67,18 @@ struct DownloadView: View {
             Button("OK") { vm.errorMessage = nil }
         } message: {
             Text(vm.errorMessage ?? "")
+        }
+        .sheet(isPresented: $showClipPreview) {
+            ClipPreviewView(sourceURL: vm.url.trimmingCharacters(in: .whitespaces),
+                            duration: vm.meta?.duration ?? 0,
+                            start: Formatting.seconds(vm.clipStart) ?? 0,
+                            end: Formatting.seconds(vm.clipEnd) ?? (vm.meta?.duration ?? 0),
+                            cookiesBrowser: settings.cookiesBrowser.ytDlpValue) { s, e in
+                vm.clipStart = Formatting.duration(s)
+                vm.clipEnd = Formatting.duration(e)
+                vm.clipEnabled = true
+            }
+            .environment(app)
         }
     }
 
@@ -273,6 +286,11 @@ struct DownloadView: View {
                             TextField("mm:ss", text: $vm.clipEnd)
                                 .textFieldStyle(.plain).font(.system(size: 12, design: .monospaced)).foregroundStyle(.white)
                                 .frame(width: 70).fieldBackground()
+                            Button { showClipPreview = true } label: {
+                                HStack(spacing: 5) { Image(systemName: "scissors"); Text(app.tr("Prévisualiser", "Preview")) }
+                            }
+                            .buttonStyle(GhostButtonStyle(tint: Theme.accent))
+                            .disabled((vm.meta?.duration ?? 0) <= 0)
                             Spacer()
                             Toggle(isOn: $vm.clipPreciseCut) {
                                 Text(app.tr("Coupe précise", "Precise cut"))
