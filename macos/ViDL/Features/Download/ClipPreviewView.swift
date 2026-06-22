@@ -21,6 +21,7 @@ struct ClipPreviewView: View {
     @State private var start: Double
     @State private var end: Double
     @State private var isPlaying = false
+    @State private var resumeFromStart = false   // dernière action = poignée → Play repart du début
     @State private var timeObserver: Any?
 
     init(sourceURL: String, duration: Double, start: Double, end: Double,
@@ -66,8 +67,11 @@ struct ClipPreviewView: View {
                     Text("\(Formatting.clip(start)) – \(Formatting.clip(end))")
                         .font(.system(size: 12, weight: .semibold, design: .monospaced)).foregroundStyle(Theme.accent)
                 }
-                TrimTimeline(duration: duration, current: $current, start: $start, end: $end) { seek($0) }
-                    .frame(height: 30)
+                TrimTimeline(duration: duration, current: $current, start: $start, end: $end) { t, fromHandle in
+                    seek(t)
+                    resumeFromStart = fromHandle   // poignée → repart du début ; aiguille → reprend ici
+                }
+                .frame(height: 30)
             }
 
             HStack {
@@ -111,7 +115,8 @@ struct ClipPreviewView: View {
     private func togglePlay() {
         if isPlaying { player.pause(); isPlaying = false }
         else {
-            if current < start || current >= end { seek(start) }
+            if resumeFromStart || current < start || current >= end { seek(start) }
+            resumeFromStart = false
             player.play(); isPlaying = true
         }
     }
@@ -152,7 +157,7 @@ private struct TrimTimeline: View {
     @Binding var current: Double
     @Binding var start: Double
     @Binding var end: Double
-    var onSeek: (Double) -> Void
+    var onSeek: (_ time: Double, _ fromHandle: Bool) -> Void
 
     private let hw: CGFloat = 12   // handle width / track inset
 
@@ -165,7 +170,7 @@ private struct TrimTimeline: View {
                 Color.white.opacity(0.001)
                     .contentShape(Rectangle())
                     .gesture(DragGesture(minimumDistance: 0).onChanged {
-                        onSeek(min(end, max(start, time($0.location.x, w))))
+                        onSeek(min(end, max(start, time($0.location.x, w))), false)
                     })
 
                 Capsule().fill(Color.white.opacity(0.12)).frame(height: 6).allowsHitTesting(false)
@@ -179,13 +184,13 @@ private struct TrimTimeline: View {
                 handle.offset(x: x(start, w) - hw)
                     .gesture(DragGesture(minimumDistance: 0).onChanged {
                         let nt = min(end - 0.5, max(0, time($0.location.x, w)))
-                        start = nt; onSeek(nt)
+                        start = nt; onSeek(nt, true)
                     })
                 // Out-handle: left edge at `end`, grows rightward.
                 handle.offset(x: x(end, w))
                     .gesture(DragGesture(minimumDistance: 0).onChanged {
                         let nt = max(start + 0.5, min(duration, time($0.location.x, w)))
-                        end = nt; onSeek(nt)
+                        end = nt; onSeek(nt, true)
                     })
             }
         }
