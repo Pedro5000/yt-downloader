@@ -23,7 +23,7 @@ struct ConversionView: View {
         }
         .scrollContentBackground(.hidden)
         .dropDestination(for: URL.self) { urls, _ in
-            guard let file = urls.first(where: { $0.isFileURL }) else { return false }
+            guard let file = urls.first(where: { $0.isFileURL && vm.isSupportedMedia($0) }) else { return false }
             Task { await vm.loadFile(path: file.path) }
             return true
         }
@@ -81,8 +81,18 @@ struct ConversionView: View {
                         InfoRow(label: app.tr("Durée", "Duration"), value: Formatting.duration(info.duration))
                         InfoRow(label: "Format", value: info.formatName)
                         InfoRow(label: app.tr("Résolution", "Resolution"), value: info.videoResolution)
-                        InfoRow(label: app.tr("Débit", "Bit rate"), value: info.formatBitRate)
+                        InfoRow(label: app.tr("Débit", "Bit rate"), value: Formatting.bitrate(info.formatBitRate))
                         InfoRow(label: "Codec", value: "\(info.videoCodec) / \(info.audioCodec)")
+                        Button {
+                            Task { await vm.chooseFile() }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                                Text(app.tr("Changer le fichier", "Change file"))
+                            }
+                        }
+                        .buttonStyle(GhostButtonStyle())
+                        .padding(.top, 2)
                     } else {
                         Text(app.tr("Aucun fichier sélectionné.", "No file selected."))
                             .font(.rounded(13)).foregroundStyle(.white.opacity(0.45))
@@ -99,13 +109,20 @@ struct ConversionView: View {
         return GlassCard {
             VStack(alignment: .leading, spacing: 14) {
                 SectionHeader(symbol: "slider.horizontal.3", title: app.tr("Options d'export", "Export Options"))
-                HStack(spacing: 24) {
-                    labeledPicker(app.tr("Format", "Format"), selection: $vm.settings.outputFormat, options: ConversionViewModel.outputFormats)
-                    labeledPicker(app.tr("Qualité", "Quality"), selection: $vm.settings.quality, options: ConversionViewModel.qualities)
-                }
-                HStack(spacing: 24) {
-                    labeledPicker(app.tr("Résolution", "Resolution"), selection: $vm.settings.resolution, options: ConversionViewModel.resolutions)
-                    labeledPicker(app.tr("Échantillonnage", "Sample rate"), selection: $vm.settings.sampleRate, options: ConversionViewModel.sampleRates)
+                if vm.isAudioOutput {
+                    HStack(spacing: 24) {
+                        labeledPicker(app.tr("Format", "Format"), selection: $vm.settings.outputFormat, options: ConversionViewModel.outputFormats)
+                        labeledPicker(app.tr("Échantillonnage", "Sample rate"), selection: $vm.settings.sampleRate, options: ConversionViewModel.sampleRates)
+                    }
+                } else {
+                    HStack(spacing: 24) {
+                        labeledPicker(app.tr("Format", "Format"), selection: $vm.settings.outputFormat, options: ConversionViewModel.outputFormats)
+                        labeledPicker(app.tr("Qualité", "Quality"), selection: $vm.settings.quality, options: ConversionViewModel.qualities)
+                    }
+                    HStack(spacing: 24) {
+                        labeledPicker(app.tr("Résolution", "Resolution"), selection: $vm.settings.resolution, options: ConversionViewModel.resolutions)
+                        labeledPicker(app.tr("Échantillonnage", "Sample rate"), selection: $vm.settings.sampleRate, options: ConversionViewModel.sampleRates)
+                    }
                 }
                 HStack {
                     Button {
@@ -115,8 +132,10 @@ struct ConversionView: View {
                     }
                     .buttonStyle(GhostButtonStyle())
                     Spacer()
-                    Toggle(app.tr("Optimiser pour le streaming", "Optimize for streaming"), isOn: $vm.settings.optimizeStreaming)
-                        .toggleStyle(.switch).font(.rounded(12)).foregroundStyle(.white.opacity(0.7))
+                    if !vm.isAudioOutput {
+                        Toggle(app.tr("Optimiser pour le streaming", "Optimize for streaming"), isOn: $vm.settings.optimizeStreaming)
+                            .toggleStyle(.switch).font(.rounded(12)).foregroundStyle(.white.opacity(0.7))
+                    }
                 }
                 HStack(spacing: 12) {
                     Button {
@@ -202,12 +221,14 @@ private struct AdvancedSettingsSheet: View {
             Text(app.tr("Paramètres avancés", "Advanced Settings"))
                 .font(.rounded(20, .bold)).foregroundStyle(.white)
             HStack(alignment: .top, spacing: 24) {
-                VStack(alignment: .leading, spacing: 12) {
-                    SectionHeader(symbol: "video", title: app.tr("Vidéo", "Video"))
-                    row(app.tr("Encodeur", "Encoder"), $vm.settings.videoEncoder, ConversionViewModel.videoEncoders)
-                    row("Bitrate", $vm.settings.videoBitrate, ConversionViewModel.videoBitrates)
-                    row(app.tr("Cadence", "Frame rate"), $vm.settings.videoFramerate, ConversionViewModel.videoFramerates)
-                    row(app.tr("Préréglage", "Preset"), $vm.settings.videoPreset, ConversionViewModel.videoPresets)
+                if !vm.isAudioOutput {
+                    VStack(alignment: .leading, spacing: 12) {
+                        SectionHeader(symbol: "video", title: app.tr("Vidéo", "Video"))
+                        row(app.tr("Encodeur", "Encoder"), $vm.settings.videoEncoder, ConversionViewModel.videoEncoders)
+                        row("Bitrate", $vm.settings.videoBitrate, ConversionViewModel.videoBitrates)
+                        row(app.tr("Cadence", "Frame rate"), $vm.settings.videoFramerate, ConversionViewModel.videoFramerates)
+                        row(app.tr("Préréglage", "Preset"), $vm.settings.videoPreset, ConversionViewModel.videoPresets)
+                    }
                 }
                 VStack(alignment: .leading, spacing: 12) {
                     SectionHeader(symbol: "waveform", title: app.tr("Audio", "Audio"))

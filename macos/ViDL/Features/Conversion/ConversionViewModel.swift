@@ -60,6 +60,16 @@ final class ConversionViewModel {
     }
 
     var hasMissingFFmpeg: Bool { BinaryLocator.ffmpeg == nil }
+    /// Output is audio-only → video controls (resolution, CRF quality, encoder) don't apply.
+    var isAudioOutput: Bool { ["mp3", "ogg", "wav"].contains(settings.outputFormat.lowercased()) }
+
+    static let supportedInputExtensions: Set<String> = [
+        "mp4", "mkv", "avi", "mov", "flv", "wmv", "webm", "m4v", "mpg", "mpeg", "ts", "3gp", "m2ts",
+        "mp3", "m4a", "aac", "wav", "flac", "ogg", "opus", "wma", "aiff", "aif", "alac"
+    ]
+    func isSupportedMedia(_ url: URL) -> Bool {
+        Self.supportedInputExtensions.contains(url.pathExtension.lowercased())
+    }
 
     func loadFile(path: String) async {
         filePath = path

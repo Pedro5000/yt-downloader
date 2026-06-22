@@ -110,6 +110,14 @@ enum Formatting {
         return f.string(from: NSNumber(value: value)) ?? "\(value)"
     }
 
+    /// Turns ffprobe's raw bits-per-second string into "2.5 Mbps" / "128 kbps".
+    static func bitrate(_ raw: String) -> String {
+        guard let bps = Double(raw), bps > 0 else { return raw.isEmpty ? "N/A" : raw }
+        if bps >= 1_000_000 { return String(format: "%.1f Mbps", bps / 1_000_000) }
+        if bps >= 1_000 { return String(format: "%.0f kbps", bps / 1_000) }
+        return String(format: "%.0f bps", bps)
+    }
+
     static func sanitizeFilename(_ name: String) -> String {
         let invalid = CharacterSet(charactersIn: "\\/*?:\"<>|")
         return String(name.unicodeScalars.filter { !invalid.contains($0) })
