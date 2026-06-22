@@ -5,6 +5,8 @@ struct DownloadView: View {
     @Environment(HistoryStore.self) private var history
     @Environment(AppSettings.self) private var settings
     @Bindable var vm: DownloadViewModel
+    @FocusState private var urlFocused: Bool
+    @State private var dropTargeted = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -39,7 +41,11 @@ struct DownloadView: View {
             vm.url = dropped.absoluteString
             Task { await vm.analyze() }
             return true
+        } isTargeted: { dropTargeted = $0 }
+        .overlay {
+            if dropTargeted { DropHint(text: app.tr("Déposez un lien vidéo ici", "Drop a video link here")) }
         }
+        .animation(.easeOut(duration: 0.12), value: dropTargeted)
         .onAppear { vm.app = app; vm.settings = settings }
         .onChange(of: app.pendingURL) { _, newValue in
             guard let newValue, !newValue.isEmpty else { return }
@@ -77,7 +83,8 @@ struct DownloadView: View {
                         .textFieldStyle(.plain)
                         .font(.rounded(13))
                         .foregroundStyle(.white)
-                        .fieldBackground()
+                        .focused($urlFocused)
+                        .fieldBackground(focused: urlFocused)
                         .onSubmit { Task { await vm.analyze() } }
                     Button {
                         if let s = NSPasteboard.general.string(forType: .string) { vm.url = s }

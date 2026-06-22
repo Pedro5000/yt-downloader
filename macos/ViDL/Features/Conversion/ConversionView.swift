@@ -3,6 +3,7 @@ import SwiftUI
 struct ConversionView: View {
     @Environment(AppState.self) private var app
     @Bindable var vm: ConversionViewModel
+    @State private var dropTargeted = false
 
     var body: some View {
         ScrollView {
@@ -26,7 +27,11 @@ struct ConversionView: View {
             guard let file = urls.first(where: { $0.isFileURL && vm.isSupportedMedia($0) }) else { return false }
             Task { await vm.loadFile(path: file.path) }
             return true
+        } isTargeted: { dropTargeted = $0 }
+        .overlay {
+            if dropTargeted { DropHint(text: app.tr("Déposez un fichier média ici", "Drop a media file here")) }
         }
+        .animation(.easeOut(duration: 0.12), value: dropTargeted)
         .onAppear { vm.app = app }
         .sheet(isPresented: $vm.showAdvanced) { AdvancedSettingsSheet(vm: vm) }
         .alert(app.tr("Attention", "Warning"),

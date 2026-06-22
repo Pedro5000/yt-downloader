@@ -6,6 +6,7 @@ struct HistoryView: View {
     @State private var search = ""
     @State private var copiedFeedback = false
     @State private var showClearConfirm = false
+    @FocusState private var searchFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -27,8 +28,9 @@ struct HistoryView: View {
                     Image(systemName: "magnifyingglass").foregroundStyle(.white.opacity(0.4))
                     TextField(app.tr("Rechercher…", "Search…"), text: $search)
                         .textFieldStyle(.plain).font(.rounded(13)).foregroundStyle(.white)
+                        .focused($searchFocused)
                 }
-                .fieldBackground()
+                .fieldBackground(focused: searchFocused)
             }
             .padding(.horizontal, 28)
             .padding(.top, 28)

@@ -25,50 +25,79 @@ struct GlassCard<Content: View>: View {
 
 struct AccentButtonStyle: ButtonStyle {
     var gradient: LinearGradient = Theme.accentGradient
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.rounded(13, .semibold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 9)
-            .background {
-                RoundedRectangle(cornerRadius: 11, style: .continuous).fill(gradient)
-            }
-            .opacity(configuration.isPressed ? 0.8 : 1)
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    func makeBody(configuration: Configuration) -> some View { Inner(configuration: configuration, gradient: gradient) }
+
+    struct Inner: View {
+        let configuration: ButtonStyleConfiguration
+        let gradient: LinearGradient
+        @State private var hovering = false
+        var body: some View {
+            configuration.label
+                .font(.rounded(13, .semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 9)
+                .background {
+                    RoundedRectangle(cornerRadius: 11, style: .continuous).fill(gradient)
+                    if hovering {
+                        RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Color.white.opacity(0.12))
+                    }
+                }
+                .opacity(configuration.isPressed ? 0.85 : 1)
+                .scaleEffect(configuration.isPressed ? 0.97 : 1)
+                .onHover { hovering = $0 }
+                .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+                .animation(.easeOut(duration: 0.12), value: hovering)
+        }
     }
 }
 
 struct GhostButtonStyle: ButtonStyle {
     var tint: Color = .white
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.rounded(13, .medium))
-            .foregroundStyle(tint.opacity(0.92))
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background {
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .fill(Color.white.opacity(configuration.isPressed ? 0.14 : 0.07))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 11, style: .continuous)
-                            .stroke(Color.white.opacity(0.10), lineWidth: 1)
-                    }
-            }
+    func makeBody(configuration: Configuration) -> some View { Inner(configuration: configuration, tint: tint) }
+
+    struct Inner: View {
+        let configuration: ButtonStyleConfiguration
+        let tint: Color
+        @State private var hovering = false
+        var body: some View {
+            configuration.label
+                .font(.rounded(13, .medium))
+                .foregroundStyle(tint.opacity(0.92))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background {
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(Color.white.opacity(configuration.isPressed ? 0.16 : (hovering ? 0.11 : 0.07)))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                .stroke(Color.white.opacity(hovering ? 0.16 : 0.10), lineWidth: 1)
+                        }
+                }
+                .onHover { hovering = $0 }
+                .animation(.easeOut(duration: 0.12), value: hovering)
+        }
     }
 }
 
 struct IconButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .frame(width: 30, height: 28)
-            .background {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.white.opacity(configuration.isPressed ? 0.16 : 0.06))
-            }
-            .foregroundStyle(.white.opacity(0.85))
-            .contentShape(Rectangle())
+    func makeBody(configuration: Configuration) -> some View { Inner(configuration: configuration) }
+
+    struct Inner: View {
+        let configuration: ButtonStyleConfiguration
+        @State private var hovering = false
+        var body: some View {
+            configuration.label
+                .frame(width: 30, height: 28)
+                .background {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.white.opacity(configuration.isPressed ? 0.18 : (hovering ? 0.12 : 0.06)))
+                }
+                .foregroundStyle(.white.opacity(hovering ? 1 : 0.85))
+                .contentShape(Rectangle())
+                .onHover { hovering = $0 }
+                .animation(.easeOut(duration: 0.12), value: hovering)
+        }
     }
 }
 
@@ -243,6 +272,7 @@ struct RemoteThumbnail: View {
 // MARK: - Styled field background
 
 struct FieldBackground: ViewModifier {
+    var focused: Bool = false
     func body(content: Content) -> some View {
         content
             .padding(.horizontal, 12)
@@ -252,12 +282,36 @@ struct FieldBackground: ViewModifier {
                     .fill(Color.black.opacity(0.25))
                     .overlay {
                         RoundedRectangle(cornerRadius: 11, style: .continuous)
-                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                            .stroke(focused ? Theme.accent.opacity(0.85) : Color.white.opacity(0.08),
+                                    lineWidth: focused ? 1.5 : 1)
                     }
             }
+            .animation(.easeOut(duration: 0.12), value: focused)
     }
 }
 
 extension View {
-    func fieldBackground() -> some View { modifier(FieldBackground()) }
+    func fieldBackground(focused: Bool = false) -> some View { modifier(FieldBackground(focused: focused)) }
+}
+
+// MARK: - Drag-and-drop hint overlay
+
+struct DropHint: View {
+    var text: String
+    var body: some View {
+        ZStack {
+            Theme.accent.opacity(0.08)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [9]))
+                .foregroundStyle(Theme.accent)
+                .padding(10)
+            VStack(spacing: 10) {
+                Image(systemName: "arrow.down.circle.fill").font(.system(size: 34))
+                Text(text).font(.rounded(15, .semibold))
+            }
+            .foregroundStyle(Theme.accent)
+        }
+        .allowsHitTesting(false)
+        .transition(.opacity)
+    }
 }

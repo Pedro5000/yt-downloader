@@ -78,6 +78,7 @@ private struct SidebarItem: View {
     let isSelected: Bool
     let action: () -> Void
     @Environment(AppState.self) private var app
+    @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
@@ -89,16 +90,19 @@ private struct SidebarItem: View {
                     .font(.rounded(14, .medium))
                 Spacer()
             }
-            .foregroundStyle(isSelected ? .white : Color.white.opacity(0.55))
+            .foregroundStyle(isSelected ? .white : Color.white.opacity(hovering ? 0.8 : 0.55))
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .background {
                 RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .fill(isSelected ? AnyShapeStyle(Theme.accentGradient.opacity(0.9)) : AnyShapeStyle(Color.clear))
+                    .fill(isSelected ? AnyShapeStyle(Theme.accentGradient.opacity(0.9))
+                                     : AnyShapeStyle(Color.white.opacity(hovering ? 0.06 : 0)))
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }
 
