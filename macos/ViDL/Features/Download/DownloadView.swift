@@ -7,6 +7,7 @@ struct DownloadView: View {
     @Bindable var vm: DownloadViewModel
     @FocusState private var urlFocused: Bool
     @State private var dropTargeted = false
+    @State private var depsRefresh = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -14,14 +15,16 @@ struct DownloadView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     header
                     if vm.hasMissingBinaries {
-                        WarningBanner(title: app.tr("yt-dlp est introuvable. Installez-le pour analyser et télécharger :",
-                                                    "yt-dlp not found. Install it to analyze and download:"),
-                                      command: "brew install yt-dlp")
+                        DependencyBanner(message: app.tr("yt-dlp est introuvable. Installez-le pour analyser et télécharger.",
+                                                         "yt-dlp not found. Install it to analyze and download."),
+                                         command: "brew install yt-dlp", packages: ["yt-dlp"],
+                                         onInstalled: { depsRefresh.toggle() })
                     }
                     if vm.hasMissingFFmpeg {
-                        WarningBanner(title: app.tr("ffmpeg est introuvable. Il est requis pour assembler les MP4 et extraire les MP3 :",
-                                                    "ffmpeg not found. It's required to merge MP4s and extract MP3s:"),
-                                      command: "brew install ffmpeg")
+                        DependencyBanner(message: app.tr("ffmpeg est introuvable. Requis pour assembler les MP4 et extraire les MP3.",
+                                                         "ffmpeg not found. Required to merge MP4s and extract MP3s."),
+                                         command: "brew install ffmpeg", packages: ["ffmpeg"],
+                                         onInstalled: { depsRefresh.toggle() })
                     }
                     analyzeCard
                     if vm.meta != nil {

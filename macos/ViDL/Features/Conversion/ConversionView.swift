@@ -4,15 +4,17 @@ struct ConversionView: View {
     @Environment(AppState.self) private var app
     @Bindable var vm: ConversionViewModel
     @State private var dropTargeted = false
+    @State private var depsRefresh = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 header
                 if vm.hasMissingFFmpeg {
-                    WarningBanner(title: app.tr("ffmpeg est introuvable. Installez-le pour convertir :",
-                                                "ffmpeg not found. Install it to convert:"),
-                                  command: "brew install ffmpeg")
+                    DependencyBanner(message: app.tr("ffmpeg est introuvable. Installez-le pour convertir.",
+                                                     "ffmpeg not found. Install it to convert."),
+                                     command: "brew install ffmpeg", packages: ["ffmpeg"],
+                                     onInstalled: { depsRefresh.toggle() })
                 }
                 fileCard
                 optionsCard

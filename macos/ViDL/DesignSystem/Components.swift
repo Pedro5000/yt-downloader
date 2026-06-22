@@ -191,6 +191,68 @@ struct WarningBanner: View {
     }
 }
 
+// MARK: - Missing-dependency banner with in-app install
+
+struct DependencyBanner: View {
+    @Environment(AppState.self) private var app
+    let message: String
+    let command: String        // e.g. "brew install yt-dlp"
+    let packages: [String]     // e.g. ["yt-dlp"]
+    var onInstalled: () -> Void = {}
+    @State private var installer = Installer()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 18)).foregroundStyle(Theme.danger)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(message).font(.rounded(13, .semibold)).foregroundStyle(.white)
+                    Text(command)
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.7)).textSelection(.enabled)
+                }
+                Spacer()
+                if installer.running {
+                    ProgressView().controlSize(.small).tint(.white)
+                } else if installer.lastResult == true {
+                    Label(app.tr("Installé", "Installed"), systemImage: "checkmark.circle.fill")
+                        .font(.rounded(12, .semibold)).foregroundStyle(Theme.success)
+                } else if let brew = BinaryLocator.brew {
+                    Button(app.tr("Installer", "Install")) {
+                        Task { await installer.install(packages, brew: brew); if installer.lastResult == true { onInstalled() } }
+                    }
+                    .buttonStyle(AccentButtonStyle())
+                } else {
+                    Button(app.tr("Installer Homebrew", "Install Homebrew")) {
+                        if let url = URL(string: "https://brew.sh") { NSWorkspace.shared.open(url) }
+                    }
+                    .buttonStyle(GhostButtonStyle())
+                }
+            }
+            if installer.running, !installer.lastLine.isEmpty {
+                Text(installer.lastLine)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.5)).lineLimit(1).truncationMode(.middle)
+            }
+            if installer.lastResult == false {
+                Text(app.tr("L'installation a échoué. Lancez la commande dans le Terminal.",
+                            "Installation failed. Run the command in Terminal."))
+                    .font(.rounded(12)).foregroundStyle(Theme.danger)
+            }
+        }
+        .padding(16)
+        .background {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Theme.danger.opacity(0.14))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(Theme.danger.opacity(0.4), lineWidth: 1)
+                }
+        }
+    }
+}
+
 // MARK: - Section header
 
 struct SectionHeader: View {

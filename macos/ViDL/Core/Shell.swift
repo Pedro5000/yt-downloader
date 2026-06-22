@@ -23,6 +23,7 @@ enum BinaryLocator {
     static var ytDlp: String? { find("yt-dlp") }
     static var ffmpeg: String? { find("ffmpeg") }
     static var ffprobe: String? { find("ffprobe") }
+    static var brew: String? { find("brew") }
 
     /// PATH passed to child processes so yt-dlp can locate ffmpeg/ffprobe.
     static var childPath: String { searchDirs.joined(separator: ":") }
