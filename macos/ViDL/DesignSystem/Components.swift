@@ -356,6 +356,20 @@ extension View {
     func fieldBackground(focused: Bool = false) -> some View { modifier(FieldBackground(focused: focused)) }
 }
 
+// MARK: - Drag a produced file out to Finder / other apps
+
+extension View {
+    /// Makes the view drag the file at `path` out of the app (e.g. into Final Cut /
+    /// the Finder). No-op when the file is absent.
+    @ViewBuilder func draggableFile(_ path: String?) -> some View {
+        if let path, FileManager.default.fileExists(atPath: path) {
+            self.onDrag { NSItemProvider(contentsOf: URL(fileURLWithPath: path)) ?? NSItemProvider() }
+        } else {
+            self
+        }
+    }
+}
+
 // MARK: - Drag-and-drop hint overlay
 
 struct DropHint: View {

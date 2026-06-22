@@ -129,6 +129,10 @@ struct DownloadView: View {
                         .help(app.tr("Télécharger la miniature", "Download thumbnail"))
                         .accessibilityLabel(app.tr("Télécharger la miniature", "Download thumbnail"))
                 }
+                .draggableFile(vm.phase.revealableFile)
+                .help(vm.phase.revealableFile != nil
+                      ? app.tr("Glissez le fichier vers le Finder / Final Cut", "Drag the file to Finder / Final Cut")
+                      : "")
                 VStack(alignment: .leading, spacing: 7) {
                     if let title = vm.meta?.title {
                         titleWithStatus(title)

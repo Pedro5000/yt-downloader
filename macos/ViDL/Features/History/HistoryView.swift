@@ -144,6 +144,7 @@ struct HistoryView: View {
         GlassCard(padding: 12) {
             HStack(spacing: 14) {
                 RemoteThumbnail(urlString: entry.thumbnailURL, width: 96, height: 54, cornerRadius: 8)
+                    .draggableFile(entry.filePath)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(entry.title).font(.rounded(14, .semibold)).foregroundStyle(.white).lineLimit(1)
                     Text(entry.url).font(.rounded(11)).foregroundStyle(.white.opacity(0.6)).lineLimit(1).truncationMode(.middle)
