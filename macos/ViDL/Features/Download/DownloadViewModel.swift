@@ -178,6 +178,10 @@ final class DownloadViewModel {
     var mp3Bitrate: String = UserDefaults.standard.string(forKey: "mp3Bitrate") ?? "320" {
         didSet { UserDefaults.standard.set(mp3Bitrate, forKey: "mp3Bitrate") }
     }
+    /// Audio output codec for audio exports (MP3/M4A/Opus/FLAC/WAV).
+    var audioFormat: AudioFormatOut = AudioFormatOut(rawValue: UserDefaults.standard.string(forKey: "audioFormat") ?? "mp3") ?? .mp3 {
+        didSet { UserDefaults.standard.set(audioFormat.rawValue, forKey: "audioFormat") }
+    }
 
     // Clip / time-range download (yt-dlp --download-sections).
     var clipEnabled = false
@@ -432,7 +436,8 @@ final class DownloadViewModel {
         }
 
         return DownloadSpec(url: trimmed, title: meta?.title, channelHandle: meta?.channelHandle,
-                            thumbnailURL: meta?.thumbnailURL, exportType: exportType, formatID: formatID,
+                            thumbnailURL: meta?.thumbnailURL, exportType: exportType, audioFormat: audioFormat,
+                            formatID: formatID,
                             mergeContainer: chosenContainer, audioLanguage: audioLanguage, mp3Bitrate: mp3Bitrate,
                             outputDirPath: outputDirPath, clipSection: clipSection, forceKeyframes: clipPreciseCut,
                             infoJSONPath: (cachedInfoURL == trimmed ? cachedInfoPath : nil),

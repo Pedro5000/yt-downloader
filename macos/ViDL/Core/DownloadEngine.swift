@@ -10,7 +10,8 @@ struct DownloadSpec: Equatable {
     let channelHandle: String?
     let thumbnailURL: String?
     let exportType: ExportType
-    let formatID: String          // "137+140", or "" for MP3
+    let audioFormat: AudioFormatOut   // codec when exportType == .mp3 (audio mode)
+    let formatID: String          // "137+140", or "" for audio
     let mergeContainer: String    // "mp4" | "mkv"
     let audioLanguage: String
     let mp3Bitrate: String
@@ -60,7 +61,7 @@ final class DownloadEngine {
         let stem = raw.isEmpty ? "video" : raw
         let handle = Formatting.sanitizeFilename(spec.channelHandle ?? "")
         let base = handle.isEmpty ? stem + "_vidl" : stem + "_vidl_" + handle
-        let ext = spec.exportType == .mp4 ? spec.mergeContainer : "mp3"
+        let ext = spec.exportType == .mp4 ? spec.mergeContainer : spec.audioFormat.ext
         let outputPath = uniquePath(dir: spec.outputDirPath, base: base, ext: ext)
         let snapshot = DownloadSnapshot(title: spec.title, url: spec.url,
                                         thumbnailURL: spec.thumbnailURL, exportType: spec.exportType)
@@ -78,7 +79,8 @@ final class DownloadEngine {
         func buildArgs(cookiesBrowser: String?, infoJSONPath: String?) -> [String] {
             YTDLPService.downloadArguments(url: spec.url, formatID: spec.formatID,
                                            exportType: spec.exportType, audioLanguage: spec.audioLanguage,
-                                           mp3Bitrate: spec.mp3Bitrate, mergeContainer: spec.mergeContainer,
+                                           mp3Bitrate: spec.mp3Bitrate, audioFormat: spec.audioFormat.rawValue,
+                                           mergeContainer: spec.mergeContainer,
                                            outputPath: outputPath,
                                            cookiesBrowser: cookiesBrowser, infoJSONPath: infoJSONPath,
                                            downloadSection: spec.clipSection, forceKeyframes: spec.forceKeyframes,

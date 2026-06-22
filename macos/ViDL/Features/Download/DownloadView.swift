@@ -204,7 +204,7 @@ struct DownloadView: View {
                 HStack(spacing: 10) {
                     Picker("", selection: $vm.exportType) {
                         Text("MP4").tag(ExportType.mp4)
-                        Text("MP3").tag(ExportType.mp3)
+                        Text(app.tr("Audio", "Audio")).tag(ExportType.mp3)
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
@@ -225,14 +225,24 @@ struct DownloadView: View {
                         .frame(width: 200)
                         .accessibilityLabel("Format")
                     } else {
-                        Picker("", selection: $vm.mp3Bitrate) {
-                            ForEach(DownloadViewModel.mp3Bitrates, id: \.self) { b in
-                                Text("\(b) kbps").tag(b)
+                        Picker("", selection: $vm.audioFormat) {
+                            ForEach(AudioFormatOut.allCases) { f in
+                                Text(f.label).tag(f)
                             }
                         }
                         .labelsHidden()
-                        .frame(width: 200)
+                        .frame(width: 110)
                         .accessibilityLabel("Format")
+                        if vm.audioFormat.isLossy {
+                            Picker("", selection: $vm.mp3Bitrate) {
+                                ForEach(DownloadViewModel.mp3Bitrates, id: \.self) { b in
+                                    Text("\(b) kbps").tag(b)
+                                }
+                            }
+                            .labelsHidden()
+                            .frame(width: 105)
+                            .accessibilityLabel(app.tr("Débit audio", "Audio bitrate"))
+                        }
                     }
 
                     Spacer()

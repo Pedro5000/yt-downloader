@@ -1,7 +1,17 @@
 import Foundation
 
 enum ExportType: String {
-    case mp4, mp3
+    case mp4, mp3   // .mp3 = "audio export" mode; the specific codec is AudioFormatOut
+}
+
+/// Audio output container/codec for audio exports.
+enum AudioFormatOut: String, CaseIterable, Identifiable {
+    case mp3, m4a, opus, flac, wav
+    var id: String { rawValue }
+    var label: String { rawValue.uppercased() }
+    var ext: String { rawValue }
+    /// Lossy → the output bitrate applies; FLAC/WAV are lossless.
+    var isLossy: Bool { self == .mp3 || self == .m4a || self == .opus }
 }
 
 /// Classified reason an analysis failed, mapped to a localized message by the view model.
@@ -225,6 +235,7 @@ enum YTDLPService {
                                   exportType: ExportType,
                                   audioLanguage: String,
                                   mp3Bitrate: String,
+                                  audioFormat: String = "mp3",
                                   mergeContainer: String = "mp4",
                                   outputPath: String,
                                   cookiesBrowser: String?,
@@ -251,7 +262,8 @@ enum YTDLPService {
             // and let ffmpeg encode to the chosen output bitrate. Which source stream it
             // came from is irrelevant once re-encoded, so we don't expose it.
             let selector = isAuto ? "bestaudio/best" : "ba[language^=\(audioLanguage)]/bestaudio/best"
-            args = ["-f", selector, "--extract-audio", "--audio-format", "mp3", "--audio-quality", "\(mp3Bitrate)K"]
+            args = ["-f", selector, "--extract-audio", "--audio-format", audioFormat]
+            if ["mp3", "m4a", "opus"].contains(audioFormat) { args += ["--audio-quality", "\(mp3Bitrate)K"] }
             if !isAuto { args += ["-S", "lang:\(audioLanguage)"] }
         }
 
