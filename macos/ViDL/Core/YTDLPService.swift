@@ -217,7 +217,9 @@ enum YTDLPService {
                                   mp3Bitrate: String,
                                   outputPath: String,
                                   cookiesBrowser: String?,
-                                  infoJSONPath: String? = nil) -> [String] {
+                                  infoJSONPath: String? = nil,
+                                  downloadSection: String? = nil,
+                                  forceKeyframes: Bool = false) -> [String] {
         let isAuto = audioLanguage.lowercased() == "auto"
         var args: [String] = []
 
@@ -240,6 +242,10 @@ enum YTDLPService {
             if !isAuto { args += ["-S", "lang:\(audioLanguage)"] }
         }
 
+        if let downloadSection {
+            args += ["--download-sections", downloadSection]
+            if forceKeyframes { args += ["--force-keyframes-at-cuts"] }
+        }
         args += ["--no-playlist", "--newline", "-o", outputPath]
         if let cookiesBrowser { args += ["--cookies-from-browser", cookiesBrowser] }
         if let infoJSONPath {

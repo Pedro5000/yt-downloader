@@ -220,6 +220,34 @@ struct DownloadView: View {
                     .accessibilityLabel(app.tr("Langue audio", "Audio language"))
                 }
 
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle(isOn: $vm.clipEnabled) {
+                        Text(app.tr("Télécharger un extrait seulement", "Download a clip only"))
+                            .font(.rounded(12, .medium)).foregroundStyle(.white.opacity(0.7))
+                    }
+                    .toggleStyle(.switch)
+                    if vm.clipEnabled {
+                        HStack(spacing: 10) {
+                            Text(app.tr("Début", "Start")).font(.rounded(12)).foregroundStyle(.white.opacity(0.6))
+                            TextField("00:00", text: $vm.clipStart)
+                                .textFieldStyle(.plain).font(.system(size: 12, design: .monospaced)).foregroundStyle(.white)
+                                .frame(width: 70).fieldBackground()
+                            Text(app.tr("Fin", "End")).font(.rounded(12)).foregroundStyle(.white.opacity(0.6))
+                            TextField("mm:ss", text: $vm.clipEnd)
+                                .textFieldStyle(.plain).font(.system(size: 12, design: .monospaced)).foregroundStyle(.white)
+                                .frame(width: 70).fieldBackground()
+                            Spacer()
+                            Toggle(isOn: $vm.clipPreciseCut) {
+                                Text(app.tr("Coupe précise", "Precise cut"))
+                                    .font(.rounded(12)).foregroundStyle(.white.opacity(0.7))
+                            }
+                            .toggleStyle(.switch)
+                            .help(app.tr("Réencode les bords pour une coupe exacte (plus lent).",
+                                         "Re-encodes edges for an exact cut (slower)."))
+                        }
+                    }
+                }
+
                 HStack(spacing: 12) {
                     Button {
                         vm.chooseFolder()

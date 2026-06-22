@@ -173,6 +173,12 @@ final class DownloadViewModel {
         didSet { UserDefaults.standard.set(mp3Bitrate, forKey: "mp3Bitrate") }
     }
 
+    // Clip / time-range download (yt-dlp --download-sections).
+    var clipEnabled = false
+    var clipStart = "00:00"
+    var clipEnd = ""
+    var clipPreciseCut = false   // --force-keyframes-at-cuts: exact bounds, re-encodes edges
+
     private static var defaultDownloads: String {
         FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first?.path
             ?? NSHomeDirectory() + "/Downloads"
@@ -355,6 +361,8 @@ final class DownloadViewModel {
         analysisInfo = tr("\(result.videoFormats.count) formats vidéo · \(result.audioFormats.count) audio",
                           "\(result.videoFormats.count) video formats · \(result.audioFormats.count) audio")
         selectDefaultFormat()
+        clipStart = "00:00"
+        if let d = result.meta.duration, d > 0 { clipEnd = Formatting.duration(d) } else { clipEnd = "" }
 
         // Cache the extracted info so the download can skip re-extraction (big prep
         // speedup). No-cookie happy path only; age-restricted media uses normal extraction.
@@ -436,6 +444,16 @@ final class DownloadViewModel {
         let ext = exportType == .mp4 ? "mp4" : "mp3"
         let outputPath = uniquePath(dir: outputDirPath, base: base, ext: ext)
 
+        var clipSection: String?
+        if clipEnabled {
+            guard let s = parseTime(clipStart), let e = parseTime(clipEnd), e > s else {
+                errorMessage = tr("Plage d'extrait invalide (début < fin, format mm:ss).",
+                                  "Invalid clip range (start < end, mm:ss).")
+                return
+            }
+            clipSection = "*\(clipStart)-\(clipEnd)"
+        }
+
         lastErrorLine = nil
         cancelled = false
         ageDetected = false
@@ -451,7 +469,8 @@ final class DownloadViewModel {
             YTDLPService.downloadArguments(url: trimmed, formatID: formatID,
                                            exportType: exportType, audioLanguage: audioLanguage,
                                            mp3Bitrate: mp3Bitrate, outputPath: outputPath,
-                                           cookiesBrowser: cookiesBrowser, infoJSONPath: infoJSONPath)
+                                           cookiesBrowser: cookiesBrowser, infoJSONPath: infoJSONPath,
+                                           downloadSection: clipSection, forceKeyframes: clipPreciseCut)
         }
 
         beginPreparing(.starting)
@@ -743,6 +762,19 @@ final class DownloadViewModel {
     }
 
     // MARK: - Helpers
+
+    /// Parses "ss", "mm:ss" or "hh:mm:ss" into seconds.
+    private func parseTime(_ s: String) -> Double? {
+        let parts = s.split(separator: ":").map { Double($0.trimmingCharacters(in: .whitespaces)) }
+        guard !parts.isEmpty, !parts.contains(where: { $0 == nil }) else { return nil }
+        let nums = parts.compactMap { $0 }
+        switch nums.count {
+        case 1: return nums[0]
+        case 2: return nums[0] * 60 + nums[1]
+        case 3: return nums[0] * 3600 + nums[1] * 60 + nums[2]
+        default: return nil
+        }
+    }
 
     private func uniquePath(dir: String, base: String, ext: String) -> String {
         let fm = FileManager.default
