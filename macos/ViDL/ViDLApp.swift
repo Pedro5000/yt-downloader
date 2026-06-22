@@ -6,6 +6,12 @@ struct ViDLApp: App {
     @State private var history = HistoryStore()
     @State private var settings = AppSettings()
 
+    init() {
+        // Don't let macOS resurrect stray windows (e.g. a previously-open Settings
+        // window) at launch — only the main window should open.
+        UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
