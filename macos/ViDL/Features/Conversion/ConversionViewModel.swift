@@ -30,6 +30,7 @@ final class ConversionViewModel {
     var errorMessage: String?
 
     var app: AppState?
+    var appSettings: AppSettings?
     private func tr(_ fr: String, _ en: String) -> String { app?.tr(fr, en) ?? fr }
 
     private var outputFile: String?
@@ -163,8 +164,10 @@ final class ConversionViewModel {
                let size = attrs[.size] as? Double {
                 estimatedSize = String(format: "%.1f MB", size / (1024 * 1024))
             }
-            Notifier.notifyIfBackgrounded(title: tr("Conversion terminée", "Conversion complete"),
-                                          body: (output as NSString).lastPathComponent)
+            if appSettings?.notificationsEnabled ?? true {
+                Notifier.notifyIfBackgrounded(title: tr("Conversion terminée", "Conversion complete"),
+                                              body: (output as NSString).lastPathComponent)
+            }
             if openWhenDone { revealOutput() }
         } else {
             statusText = tr("La conversion a échoué.", "Conversion failed.")

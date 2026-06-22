@@ -33,11 +33,16 @@ final class AppSettings {
     var includeAllFormats: Bool {
         didSet { UserDefaults.standard.set(includeAllFormats, forKey: "includeAllFormats") }
     }
+    /// Show a system notification when a download/conversion finishes in the background.
+    var notificationsEnabled: Bool {
+        didSet { UserDefaults.standard.set(notificationsEnabled, forKey: "notificationsEnabled") }
+    }
 
     init() {
         let saved = UserDefaults.standard.string(forKey: "cookiesBrowser")
         // Default to Firefox to preserve the previous hard-coded behavior.
         self.cookiesBrowser = CookiesBrowser(rawValue: saved ?? "firefox") ?? .firefox
         self.includeAllFormats = UserDefaults.standard.bool(forKey: "includeAllFormats")
+        self.notificationsEnabled = (UserDefaults.standard.object(forKey: "notificationsEnabled") as? Bool) ?? true
     }
 }

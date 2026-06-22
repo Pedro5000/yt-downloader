@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ConversionView: View {
     @Environment(AppState.self) private var app
+    @Environment(AppSettings.self) private var settings
     @Bindable var vm: ConversionViewModel
     @State private var dropTargeted = false
     @State private var depsRefresh = false
@@ -34,7 +35,7 @@ struct ConversionView: View {
             if dropTargeted { DropHint(text: app.tr("Déposez un fichier média ici", "Drop a media file here")) }
         }
         .animation(.easeOut(duration: 0.12), value: dropTargeted)
-        .onAppear { vm.app = app }
+        .onAppear { vm.app = app; vm.appSettings = settings }
         .sheet(isPresented: $vm.showAdvanced) { AdvancedSettingsSheet(vm: vm) }
         .alert(app.tr("Attention", "Warning"),
                isPresented: Binding(get: { vm.errorMessage != nil }, set: { if !$0 { vm.errorMessage = nil } })) {
