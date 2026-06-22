@@ -633,6 +633,8 @@ final class DownloadViewModel {
         let completion = Completion(snapshot: snapshot, filePath: filePath, sizeMB: sizeMB)
         lastCompletion = completion
         phase = .completed(completion)
+        Notifier.notifyIfBackgrounded(title: tr("Téléchargement terminé", "Download complete"),
+                                      body: snapshot.title ?? "")
 
         if let title = snapshot.title, !title.isEmpty {
             let entry = HistoryEntry(title: title, url: snapshot.url,

@@ -26,6 +26,7 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Theme.appBackground)
+        .task { Notifier.requestAuthorizationIfNeeded() }
         .sheet(isPresented: $app.showAbout) { AboutView() }
     }
 }

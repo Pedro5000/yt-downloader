@@ -163,6 +163,8 @@ final class ConversionViewModel {
                let size = attrs[.size] as? Double {
                 estimatedSize = String(format: "%.1f MB", size / (1024 * 1024))
             }
+            Notifier.notifyIfBackgrounded(title: tr("Conversion terminée", "Conversion complete"),
+                                          body: (output as NSString).lastPathComponent)
             if openWhenDone { revealOutput() }
         } else {
             statusText = tr("La conversion a échoué.", "Conversion failed.")
