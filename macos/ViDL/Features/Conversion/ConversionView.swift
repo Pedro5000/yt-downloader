@@ -118,13 +118,19 @@ struct ConversionView: View {
             VStack(alignment: .leading, spacing: 14) {
                 SectionHeader(symbol: "slider.horizontal.3", title: app.tr("Options d'export", "Export Options"))
                 if vm.isAudioOutput {
-                    optionRow(app.tr("Format", "Format"), $vm.settings.outputFormat, ConversionViewModel.outputFormats,
-                              app.tr("Échantillonnage", "Sample rate"), $vm.settings.sampleRate, ConversionViewModel.sampleRates)
+                    HStack(spacing: 24) {
+                        labeledPicker(app.tr("Format", "Format"), selection: $vm.settings.outputFormat, options: ConversionViewModel.outputFormats)
+                        labeledPicker(app.tr("Échantillonnage", "Sample rate"), selection: $vm.settings.sampleRate, options: ConversionViewModel.sampleRates)
+                    }
                 } else {
-                    optionRow(app.tr("Format", "Format"), $vm.settings.outputFormat, ConversionViewModel.outputFormats,
-                              app.tr("Qualité", "Quality"), $vm.settings.quality, ConversionViewModel.qualities)
-                    optionRow(app.tr("Résolution", "Resolution"), $vm.settings.resolution, ConversionViewModel.resolutions,
-                              app.tr("Échantillonnage", "Sample rate"), $vm.settings.sampleRate, ConversionViewModel.sampleRates)
+                    HStack(spacing: 24) {
+                        labeledPicker(app.tr("Format", "Format"), selection: $vm.settings.outputFormat, options: ConversionViewModel.outputFormats)
+                        labeledPicker(app.tr("Qualité", "Quality"), selection: $vm.settings.quality, options: ConversionViewModel.qualities)
+                    }
+                    HStack(spacing: 24) {
+                        labeledPicker(app.tr("Résolution", "Resolution"), selection: $vm.settings.resolution, options: ConversionViewModel.resolutions)
+                        labeledPicker(app.tr("Échantillonnage", "Sample rate"), selection: $vm.settings.sampleRate, options: ConversionViewModel.sampleRates)
+                    }
                 }
                 HStack {
                     Button {
@@ -200,19 +206,15 @@ struct ConversionView: View {
         }
     }
 
-    /// Two label+dropdown pairs on one line: the left pair is anchored left, the right pair
-    /// is pushed flush right (fixed-width fields) so Qualité / Échantillonnage line up with
-    /// each other and with the toggles' right edge below.
-    private func optionRow(_ leftLabel: String, _ leftSel: Binding<String>, _ leftOpts: [String],
-                           _ rightLabel: String, _ rightSel: Binding<String>, _ rightOpts: [String]) -> some View {
-        HStack(spacing: 0) {
-            Text(leftLabel).font(.rounded(12, .medium)).foregroundStyle(.white.opacity(0.6))
-                .frame(width: 96, alignment: .leading)
-            FieldMenu(selection: leftSel, options: leftOpts).frame(width: 150)
-            Spacer(minLength: 24)
-            Text(rightLabel).font(.rounded(12, .medium)).foregroundStyle(.white.opacity(0.6))
-                .frame(width: 132, alignment: .leading)
-            FieldMenu(selection: rightSel, options: rightOpts).frame(width: 150)
+    private func labeledPicker(_ label: String, selection: Binding<String>, options: [String]) -> some View {
+        HStack(spacing: 10) {
+            Text(label).font(.rounded(12, .medium)).foregroundStyle(.white.opacity(0.6))
+            Picker("", selection: selection) {
+                ForEach(options, id: \.self) { Text($0).tag($0) }
+            }
+            .labelsHidden()
+            .frame(maxWidth: .infinity)
+            .accessibilityLabel(label)
         }
     }
 }
@@ -301,9 +303,12 @@ private struct AdvancedSettingsSheet: View {
             Text(label)
                 .font(.rounded(12, .medium)).foregroundStyle(.white.opacity(0.6))
                 .frame(width: 92, alignment: .leading)
-            FieldMenu(selection: selection, options: options)
-                .frame(maxWidth: .infinity)
-                .accessibilityLabel(label)
+            Picker("", selection: selection) {
+                ForEach(options, id: \.self) { Text($0).tag($0) }
+            }
+            .labelsHidden()
+            .frame(maxWidth: .infinity)
+            .accessibilityLabel(label)
         }
     }
 
@@ -323,40 +328,3 @@ private struct AdvancedSettingsSheet: View {
     }
 }
 
-/// Dark, field-styled dropdown matching the app — a custom trigger over a native
-/// inline Picker (so the popup keeps native checkmarks/keyboard handling).
-private struct FieldMenu: View {
-    @Binding var selection: String
-    let options: [String]
-    @State private var hovering = false
-
-    var body: some View {
-        Menu {
-            Picker(selection: $selection, label: EmptyView()) {
-                ForEach(options, id: \.self) { Text($0).tag($0) }
-            }
-            .pickerStyle(.inline).labelsHidden()
-        } label: {
-            HStack(spacing: 8) {
-                Text(selection)
-                    .font(.rounded(12, .semibold)).foregroundStyle(.white)
-                    .lineLimit(1).truncationMode(.tail)
-                Spacer(minLength: 4)
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 9, weight: .bold)).foregroundStyle(.white.opacity(0.5))
-            }
-            .padding(.horizontal, 11).padding(.vertical, 8)
-            .background {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.black.opacity(0.28))
-                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(Color.white.opacity(hovering ? 0.22 : 0.10), lineWidth: 1))
-            }
-            .contentShape(Rectangle())
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .onHover { hovering = $0 }
-        .animation(.easeOut(duration: 0.12), value: hovering)
-    }
-}
