@@ -164,9 +164,13 @@ final class DownloadViewModel {
     var videoFormats: [VideoFormat] = []
     var audioFormats: [AudioFormat] = []
 
-    var exportType: ExportType = .mp4
+    var exportType: ExportType = ExportType(rawValue: UserDefaults.standard.string(forKey: "exportType") ?? "mp4") ?? .mp4 {
+        didSet { UserDefaults.standard.set(exportType.rawValue, forKey: "exportType") }
+    }
     var selectedVideoFormatID: String?
-    var audioLanguage = "Auto"
+    var audioLanguage: String = UserDefaults.standard.string(forKey: "audioLanguage") ?? "Auto" {
+        didSet { UserDefaults.standard.set(audioLanguage, forKey: "audioLanguage") }
+    }
     /// Output MP3 bitrate (kbps). MP3 always re-encodes the best source audio, so this
     /// is what actually controls quality — not which source stream is picked.
     var mp3Bitrate: String = UserDefaults.standard.string(forKey: "mp3Bitrate") ?? "320" {
