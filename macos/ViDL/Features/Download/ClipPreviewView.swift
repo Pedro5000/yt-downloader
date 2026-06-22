@@ -63,7 +63,7 @@ struct ClipPreviewView: View {
                     .buttonStyle(GhostButtonStyle())
                     Text(Formatting.duration(current)).font(.system(size: 12, design: .monospaced)).foregroundStyle(.white.opacity(0.7))
                     Spacer()
-                    Text("\(Formatting.duration(start)) – \(Formatting.duration(end))")
+                    Text("\(Formatting.clip(start)) – \(Formatting.clip(end))")
                         .font(.system(size: 12, weight: .semibold, design: .monospaced)).foregroundStyle(Theme.accent)
                 }
                 TrimTimeline(duration: duration, current: $current, start: $start, end: $end) { seek($0) }
@@ -73,6 +73,11 @@ struct ClipPreviewView: View {
             HStack {
                 Button(app.tr("Annuler", "Cancel")) { dismiss() }
                     .buttonStyle(GhostButtonStyle())
+                if !loading && !failed {
+                    Label(app.tr("Coupe exacte (réencode les bords)", "Exact cut (re-encodes edges)"),
+                          systemImage: "scissors")
+                        .font(.rounded(11)).foregroundStyle(.white.opacity(0.45))
+                }
                 Spacer()
                 Button(app.tr("Appliquer l'extrait", "Apply clip")) {
                     onApply(start, end); dismiss()

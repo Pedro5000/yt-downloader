@@ -103,6 +103,17 @@ enum Formatting {
         return String(format: "%02d:%02d", m, s)
     }
 
+    /// Clip timecode with hundredths of a second ("12:57.50", "1:02:03.25") — for
+    /// sub-second trim precision passed to yt-dlp's --download-sections.
+    static func clip(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "00:00.00" }
+        let h = Int(seconds) / 3600
+        let m = (Int(seconds) / 60) % 60
+        let s = seconds - Double((Int(seconds) / 60) * 60)   // fractional seconds in [0,60)
+        if h > 0 { return String(format: "%d:%02d:%05.2f", h, m, s) }
+        return String(format: "%d:%05.2f", m, s)
+    }
+
     /// Parses "ss", "mm:ss" or "hh:mm:ss" into seconds.
     static func seconds(_ s: String) -> Double? {
         let parts = s.split(separator: ":").map { Double($0.trimmingCharacters(in: .whitespaces)) }

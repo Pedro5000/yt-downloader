@@ -74,9 +74,10 @@ struct DownloadView: View {
                             start: Formatting.seconds(vm.clipStart) ?? 0,
                             end: Formatting.seconds(vm.clipEnd) ?? (vm.meta?.duration ?? 0),
                             cookiesBrowser: settings.cookiesBrowser.ytDlpValue) { s, e in
-                vm.clipStart = Formatting.duration(s)
-                vm.clipEnd = Formatting.duration(e)
+                vm.clipStart = Formatting.clip(s)
+                vm.clipEnd = Formatting.clip(e)
                 vm.clipEnabled = true
+                vm.clipPreciseCut = true   // visualiseur = WYSIWYG → coupe exacte (réencodée) au centième
             }
             .environment(app)
         }
