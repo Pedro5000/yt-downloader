@@ -43,19 +43,19 @@ enum YTDLPService {
     }
 
     /// Runs a single `yt-dlp -j` call and builds the format lists from the JSON `formats` array.
-    static func analyze(url: String, useCookies: Bool = false) async -> (result: AnalysisResult?, ageRestricted: Bool) {
-        guard let ytDlp = BinaryLocator.ytDlp else { return (nil, false) }
+    static func analyze(url: String, useCookies: Bool = false) async -> (result: AnalysisResult?, ageRestricted: Bool, infoJSON: String?) {
+        guard let ytDlp = BinaryLocator.ytDlp else { return (nil, false, nil) }
         var args = ["-j", "--no-warnings", "--no-playlist"]
         if useCookies { args += ["--cookies-from-browser", "firefox"] }
         args.append(url)
 
         let res = await Shell.capture(ytDlp, args)
         if !res.succeeded {
-            return (nil, needsAgeRetry(res.combined))
+            return (nil, needsAgeRetry(res.combined), nil)
         }
         guard let data = res.stdout.data(using: .utf8),
               let info = try? JSONDecoder().decode(RawInfo.self, from: data) else {
-            return (nil, false)
+            return (nil, false, nil)
         }
 
         var meta = VideoMeta()
@@ -79,7 +79,7 @@ enum YTDLPService {
         meta.thumbnailURL = info.thumbnail
 
         let (videoFormats, audioFormats) = buildFormats(info.formats ?? [])
-        return (AnalysisResult(meta: meta, videoFormats: videoFormats, audioFormats: audioFormats), false)
+        return (AnalysisResult(meta: meta, videoFormats: videoFormats, audioFormats: audioFormats), false, res.stdout)
     }
 
     private static func buildFormats(_ formats: [RawFormat]) -> ([VideoFormat], [AudioFormat]) {
@@ -182,7 +182,8 @@ enum YTDLPService {
                                   audioLanguage: String,
                                   mp3Bitrate: String,
                                   outputPath: String,
-                                  useCookies: Bool) -> [String] {
+                                  useCookies: Bool,
+                                  infoJSONPath: String? = nil) -> [String] {
         let isAuto = audioLanguage.lowercased() == "auto"
         var args: [String] = []
 
@@ -207,7 +208,13 @@ enum YTDLPService {
 
         args += ["--no-playlist", "--newline", "-o", outputPath]
         if useCookies { args += ["--cookies-from-browser", "firefox"] }
-        args.append(url)
+        if let infoJSONPath {
+            // Reuse the info extracted during analysis — skips the webpage/player/challenge
+            // round-trip, so the download starts almost immediately.
+            args += ["--load-info-json", infoJSONPath]
+        } else {
+            args.append(url)
+        }
         return args
     }
 }

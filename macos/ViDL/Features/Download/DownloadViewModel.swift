@@ -207,6 +207,11 @@ final class DownloadViewModel {
     private var cancelReencode = false
     private var smoothTask: Task<Void, Never>?
 
+    // Info JSON captured at analysis, reused at download time to skip re-extraction.
+    private var cachedInfoURL: String?
+    private var cachedInfoPath: String?
+    private static let infoJSONPath = NSTemporaryDirectory() + "vidl-last-info.json"
+
     // MARK: - Derived presentation
 
     /// The on-screen card's "Downloaded" mark: true only when the displayed video is
@@ -318,6 +323,8 @@ final class DownloadViewModel {
         videoFormats = []
         audioFormats = []
         selectedVideoFormatID = nil
+        cachedInfoURL = nil
+        cachedInfoPath = nil
         // A new analysis means moving on to another video — clear the previous job's
         // footer entirely (an empty bar would say nothing, and a stale "done" message
         // would be misleading). No-op while a job runs: that transfer still owns the
@@ -327,9 +334,11 @@ final class DownloadViewModel {
             displayProgress = 0
         }
 
-        var (result, ageRestricted) = await YTDLPService.analyze(url: trimmed)
+        var (result, ageRestricted, infoJSON) = await YTDLPService.analyze(url: trimmed)
+        var usedCookies = false
         if result == nil && ageRestricted {
-            (result, _) = await YTDLPService.analyze(url: trimmed, useCookies: true)
+            (result, _, infoJSON) = await YTDLPService.analyze(url: trimmed, useCookies: true)
+            usedCookies = true
         }
 
         analyzing = false
@@ -343,6 +352,14 @@ final class DownloadViewModel {
         analysisInfo = tr("\(result.videoFormats.count) formats vidéo · \(result.audioFormats.count) audio",
                           "\(result.videoFormats.count) video formats · \(result.audioFormats.count) audio")
         selectDefaultFormat()
+
+        // Cache the extracted info so the download can skip re-extraction (big prep
+        // speedup). No-cookie happy path only; age-restricted media uses normal extraction.
+        if !usedCookies, let infoJSON, let data = infoJSON.data(using: .utf8),
+           (try? data.write(to: URL(fileURLWithPath: Self.infoJSONPath))) != nil {
+            cachedInfoURL = trimmed
+            cachedInfoPath = Self.infoJSONPath
+        }
     }
 
     private func selectDefaultFormat() {
@@ -399,28 +416,46 @@ final class DownloadViewModel {
         cancelled = false
         ageDetected = false
         displayProgress = 0
+        let expected = formatID.contains("+") ? 2 : 1
 
-        var transfer = Transfer(snapshot: snapshot, outputPath: outputPath)
-        transfer.segments.expected = formatID.contains("+") ? 2 : 1
-        phase = .preparing(.starting, transfer)
+        func beginPreparing(_ prep: PrepPhase) {
+            var t = Transfer(snapshot: snapshot, outputPath: outputPath)
+            t.segments.expected = expected
+            phase = .preparing(prep, t)
+        }
+        func buildArgs(useCookies: Bool, infoJSONPath: String?) -> [String] {
+            YTDLPService.downloadArguments(url: trimmed, formatID: formatID,
+                                           exportType: exportType, audioLanguage: audioLanguage,
+                                           mp3Bitrate: mp3Bitrate, outputPath: outputPath,
+                                           useCookies: useCookies, infoJSONPath: infoJSONPath)
+        }
+
+        beginPreparing(.starting)
         startSmoothing()
 
-        let args = YTDLPService.downloadArguments(url: trimmed, formatID: formatID,
-                                                  exportType: exportType, audioLanguage: audioLanguage,
-                                                  mp3Bitrate: mp3Bitrate,
-                                                  outputPath: outputPath, useCookies: false)
-        var status = await runDownload(executable: ytDlp, args: args)
+        var status: Int32 = -1
 
+        // Fast path: reuse the JSON captured at analysis to skip re-extraction (prep
+        // becomes near-instant). Any failure falls through to a fresh extraction.
+        if cachedInfoURL == trimmed, let infoPath = cachedInfoPath,
+           FileManager.default.fileExists(atPath: infoPath) {
+            status = await runDownload(executable: ytDlp, args: buildArgs(useCookies: false, infoJSONPath: infoPath))
+            if status != 0 && !cancelled {
+                ageDetected = false        // cached info likely stale → restart clean
+                beginPreparing(.starting)
+            }
+        }
+
+        // Normal extraction (also the fallback when the cached info failed).
+        if status != 0 && !cancelled {
+            status = await runDownload(executable: ytDlp, args: buildArgs(useCookies: false, infoJSONPath: nil))
+        }
+
+        // Age-restricted retry with Firefox cookies.
         if status != 0 && ageDetected && !cancelled {
             ageDetected = false
-            var fresh = Transfer(snapshot: snapshot, outputPath: outputPath)
-            fresh.segments.expected = formatID.contains("+") ? 2 : 1
-            phase = .preparing(.cookies, fresh)
-            let cookieArgs = YTDLPService.downloadArguments(url: trimmed, formatID: formatID,
-                                                            exportType: exportType, audioLanguage: audioLanguage,
-                                                            mp3Bitrate: mp3Bitrate,
-                                                            outputPath: outputPath, useCookies: true)
-            status = await runDownload(executable: ytDlp, args: cookieArgs)
+            beginPreparing(.cookies)
+            status = await runDownload(executable: ytDlp, args: buildArgs(useCookies: true, infoJSONPath: nil))
         }
 
         activeProcess = nil
