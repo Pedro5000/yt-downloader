@@ -66,6 +66,8 @@ struct Completion: Equatable {
 enum TransferPhase: Equatable {
     /// No active or finished job to show → footer absent.
     case none
+    /// Waiting in the download queue, not started yet.
+    case queued
 
     case preparing(PrepPhase, Transfer)        // before first byte → indeterminate bar
     case downloading(Transfer)                 // bytes flowing → determinate 0…100
@@ -102,7 +104,7 @@ extension TransferPhase {
         case .preparing(_, let t), .downloading(let t), .finalizing(_, let t): return t.progress
         case .completed, .reencoded:        return 100
         case .reencoding(let p):            return p
-        case .none, .failed, .cancelled, .reencodeFailed: return 0
+        case .none, .queued, .failed, .cancelled, .reencodeFailed: return 0
         }
     }
 
@@ -203,7 +205,6 @@ final class DownloadViewModel {
     private var lastCompletion: Completion?
 
     var errorMessage: String?
-    private var lastErrorLine: String?
 
     var app: AppState?
     var settings: AppSettings?
@@ -212,9 +213,8 @@ final class DownloadViewModel {
     static let audioLanguages = ["Auto", "en", "pl", "fr", "de", "es", "it", "pt", "ja", "ko", "zh-Hans", "zh-Hant"]
     static let mp3Bitrates = ["320", "256", "192", "128"]
 
-    private var activeProcess: ManagedProcess?
-    private var cancelled = false
-    private var ageDetected = false
+    private var activeProcess: ManagedProcess?   // re-encode process
+    private var activeEngine: DownloadEngine?    // current download
     private var cancelReencode = false
     private var smoothTask: Task<Void, Never>?
 
@@ -236,6 +236,7 @@ final class DownloadViewModel {
     var statusLine: String {
         switch phase {
         case .none:                        return ""
+        case .queued:                      return tr("En file d'attente…", "Queued…")
         case .preparing(.cookies, _):      return tr("Vidéo restreinte → cookies Firefox…", "Age-restricted → Firefox cookies…")
         case .preparing(.starting, _):     return tr("Préparation…", "Preparing…")
         case .preparing(.fetchingInfo, _): return tr("Récupération des informations…", "Fetching video info…")
@@ -264,16 +265,6 @@ final class DownloadViewModel {
         if !t.speedText.isEmpty { parts.append(t.speedText) }
         if !t.etaText.isEmpty { parts.append("ETA \(t.etaText)") }
         return parts.joined(separator: " · ")
-    }
-
-    /// Mutates the in-flight transfer in place (no-op outside transfer phases).
-    private func withTransfer(_ body: (inout Transfer) -> Void) {
-        switch phase {
-        case .preparing(let p, var t): body(&t); phase = .preparing(p, t)
-        case .downloading(var t):      body(&t); phase = .downloading(t)
-        case .finalizing(let k, var t): body(&t); phase = .finalizing(k, t)
-        default: break
-        }
     }
 
     // MARK: - Smooth progress follower
@@ -415,270 +406,78 @@ final class DownloadViewModel {
 
     // MARK: - Download
 
-    func download(history: HistoryStore) async {
+    /// Builds the immutable download spec from current UI state (used by the Download
+    /// tab and, later, by the queue). Sets `errorMessage` and returns nil if invalid.
+    func makeSpec() -> DownloadSpec? {
         let trimmed = url.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty, trimmed.hasPrefix("http") else {
-            errorMessage = tr("URL manquante ou invalide.", "Missing or invalid URL.")
-            return
-        }
-        guard let ytDlp = BinaryLocator.ytDlp else {
-            errorMessage = tr("yt-dlp introuvable.", "yt-dlp not found.")
-            return
-        }
-
         let formatID: String
         if exportType == .mp4 {
-            guard let id = selectedVideoFormatID else { errorMessage = tr("Analysez la vidéo d'abord.", "Analyze the video first."); return }
+            guard let id = selectedVideoFormatID else { errorMessage = tr("Analysez la vidéo d'abord.", "Analyze the video first."); return nil }
             formatID = id
         } else {
-            guard meta != nil else { errorMessage = tr("Analysez la vidéo d'abord.", "Analyze the video first."); return }
-            formatID = ""   // MP3 uses best-audio selection in the service
+            guard meta != nil else { errorMessage = tr("Analysez la vidéo d'abord.", "Analyze the video first."); return nil }
+            formatID = ""
         }
-
-        let snapshot = DownloadSnapshot(title: meta?.title, url: trimmed,
-                                        thumbnailURL: meta?.thumbnailURL, exportType: exportType)
-
-        let raw = Formatting.sanitizeFilename(meta?.title ?? "video")
-        let stem = raw.isEmpty ? "video" : raw
-        // Suffix is a marker for downstream tools (e.g. Quarry's downloads sorter
-        // exempts files containing "_vidl"). When yt-dlp surfaces the channel
-        // handle, append it after the marker so the source channel is visible
-        // in the filename: "<title>_vidl_@handle.ext".
-        let handle = Formatting.sanitizeFilename(meta?.channelHandle ?? "")
-        let base = handle.isEmpty ? stem + "_vidl" : stem + "_vidl_" + handle
         // VP9/AV1 video formats are exported as MKV; everything else as MP4.
         let chosenContainer = videoFormats.first(where: { $0.id == selectedVideoFormatID })?.container ?? "mp4"
-        let ext = exportType == .mp4 ? chosenContainer : "mp3"
-        let outputPath = uniquePath(dir: outputDirPath, base: base, ext: ext)
 
         var clipSection: String?
         if clipEnabled {
             guard let s = parseTime(clipStart), let e = parseTime(clipEnd), e > s else {
                 errorMessage = tr("Plage d'extrait invalide (début < fin, format mm:ss).",
                                   "Invalid clip range (start < end, mm:ss).")
-                return
+                return nil
             }
             clipSection = "*\(clipStart)-\(clipEnd)"
         }
 
-        lastErrorLine = nil
-        cancelled = false
-        ageDetected = false
+        return DownloadSpec(url: trimmed, title: meta?.title, channelHandle: meta?.channelHandle,
+                            thumbnailURL: meta?.thumbnailURL, exportType: exportType, formatID: formatID,
+                            mergeContainer: chosenContainer, audioLanguage: audioLanguage, mp3Bitrate: mp3Bitrate,
+                            outputDirPath: outputDirPath, clipSection: clipSection, forceKeyframes: clipPreciseCut,
+                            infoJSONPath: (cachedInfoURL == trimmed ? cachedInfoPath : nil),
+                            cookiesBrowser: settings?.cookiesBrowser.ytDlpValue)
+    }
+
+    func download(history: HistoryStore) async {
+        let trimmed = url.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, trimmed.hasPrefix("http") else {
+            errorMessage = tr("URL manquante ou invalide.", "Missing or invalid URL.")
+            return
+        }
+        guard BinaryLocator.ytDlp != nil else {
+            errorMessage = tr("yt-dlp introuvable.", "yt-dlp not found.")
+            return
+        }
+        guard let spec = makeSpec() else { return }
+
         displayProgress = 0
-        let expected = formatID.contains("+") ? 2 : 1
-
-        func beginPreparing(_ prep: PrepPhase) {
-            var t = Transfer(snapshot: snapshot, outputPath: outputPath)
-            t.segments.expected = expected
-            phase = .preparing(prep, t)
-        }
-        func buildArgs(cookiesBrowser: String?, infoJSONPath: String?) -> [String] {
-            YTDLPService.downloadArguments(url: trimmed, formatID: formatID,
-                                           exportType: exportType, audioLanguage: audioLanguage,
-                                           mp3Bitrate: mp3Bitrate, mergeContainer: chosenContainer,
-                                           outputPath: outputPath,
-                                           cookiesBrowser: cookiesBrowser, infoJSONPath: infoJSONPath,
-                                           downloadSection: clipSection, forceKeyframes: clipPreciseCut)
-        }
-
-        beginPreparing(.starting)
+        let engine = DownloadEngine()
+        activeEngine = engine
         startSmoothing()
+        let outcome = await engine.run(spec: spec) { [weak self] p in self?.phase = p }
+        activeEngine = nil
 
-        var status: Int32 = -1
-
-        // Fast path: reuse the JSON captured at analysis to skip re-extraction (prep
-        // becomes near-instant). Any failure falls through to a fresh extraction.
-        if cachedInfoURL == trimmed, let infoPath = cachedInfoPath,
-           FileManager.default.fileExists(atPath: infoPath) {
-            status = await runDownload(executable: ytDlp, args: buildArgs(cookiesBrowser: nil, infoJSONPath: infoPath))
-            if status != 0 && !cancelled {
-                ageDetected = false        // cached info likely stale → restart clean
-                beginPreparing(.starting)
+        switch outcome.phase {
+        case .completed(let c):
+            lastCompletion = c
+            phase = .completed(c)
+            if settings?.notificationsEnabled ?? true {
+                Notifier.notifyIfBackgrounded(title: tr("Téléchargement terminé", "Download complete"),
+                                              body: spec.title ?? "")
             }
+            if let entry = outcome.historyEntry { history.add(entry) }
+            if openFolderAfter { revealFolder() }
+        case .failed(let m):
+            phase = outcome.phase
+            errorMessage = m.isEmpty ? tr("Échec du téléchargement.", "Download failed.") : m
+        default:
+            phase = outcome.phase   // .cancelled
         }
-
-        // Normal extraction (also the fallback when the cached info failed).
-        if status != 0 && !cancelled {
-            status = await runDownload(executable: ytDlp, args: buildArgs(cookiesBrowser: nil, infoJSONPath: nil))
-        }
-
-        // Age-restricted retry using the configured browser's cookies.
-        if status != 0 && ageDetected && !cancelled, let browser = settings?.cookiesBrowser.ytDlpValue {
-            ageDetected = false
-            beginPreparing(.cookies)
-            status = await runDownload(executable: ytDlp, args: buildArgs(cookiesBrowser: browser, infoJSONPath: nil))
-        }
-
-        activeProcess = nil
-
-        if status == 0 {
-            finishSuccess(history: history, snapshot: snapshot)
-        } else if cancelled {
-            cleanupIncompleteFiles(outputPath: outputPath)
-            phase = .cancelled
-        } else {
-            phase = .failed(tr("Échec du téléchargement.", "Download failed."))
-            errorMessage = cleanedError() ?? tr("Échec du téléchargement.", "Download failed.")
-        }
-    }
-
-    /// Removes the partial output and yt-dlp's intermediate per-stream files
-    /// (`<stem>.f<id>.<ext>`, `.part`, `.ytdl`) left behind when the download is cancelled.
-    /// Safe because the `_vidl` suffix plus `uniquePath()` make the stem unique to this run.
-    private func cleanupIncompleteFiles(outputPath: String) {
-        let fm = FileManager.default
-        let dir = (outputPath as NSString).deletingLastPathComponent
-        let stem = ((outputPath as NSString).deletingPathExtension as NSString).lastPathComponent
-        guard !stem.isEmpty, let names = try? fm.contentsOfDirectory(atPath: dir) else { return }
-        for name in names where name == stem || name.hasPrefix(stem + ".") {
-            try? fm.removeItem(atPath: "\(dir)/\(name)")
-        }
-    }
-
-    /// Turns yt-dlp's raw "ERROR: [youtube] id: message" into a readable sentence.
-    private func cleanedError() -> String? {
-        guard var msg = lastErrorLine else { return nil }
-        if let range = msg.range(of: #"^\[[^\]]+\]\s*[^:]*:\s*"#, options: .regularExpression) {
-            msg.removeSubrange(range)
-        }
-        msg = msg.trimmingCharacters(in: .whitespacesAndNewlines)
-        return msg.isEmpty ? nil : msg
-    }
-
-    private func runDownload(executable: String, args: [String]) async -> Int32 {
-        let proc = ManagedProcess()
-        activeProcess = proc
-        return await proc.stream(executable: executable, arguments: args) { [weak self] line in
-            self?.handleDownloadLine(line)
-        }
-    }
-
-    private func handleDownloadLine(_ line: String) {
-        if line.contains("Sign in to confirm") || line.lowercased().contains("age-restricted") {
-            ageDetected = true
-        }
-        // Each new stream starts with a "[download] Destination:" line — a reliable segment boundary.
-        if line.hasPrefix("[download] Destination: ") {
-            withTransfer { t in
-                t.segments.fileCount += 1
-                t.segments.current = min(max(t.segments.fileCount - 1, 0), t.segments.expected - 1)
-                t.segments.rawPct = 0
-                t.segments.skipNextPct = true
-            }
-        }
-        if line.hasPrefix("ERROR:") {
-            lastErrorLine = String(line.dropFirst("ERROR:".count)).trimmingCharacters(in: .whitespaces)
-        }
-        if let m = firstGroup(#"at\s+([0-9.]+\s*[KMG]?i?B/s)"#, in: line) {
-            withTransfer { $0.speedText = m.replacingOccurrences(of: " ", with: "") }
-        }
-        if let m = firstGroup(#"ETA\s+(\d+:\d+(?::\d+)?)"#, in: line) {
-            withTransfer { $0.etaText = m }
-        }
-        if line.hasPrefix("[Merger]") {
-            if let t = phase.transfer { phase = .finalizing(.merging, t) }
-        } else if line.hasPrefix("[ExtractAudio]") {
-            if let t = phase.transfer { phase = .finalizing(.extracting, t) }
-        } else if case .preparing(let prep, let t) = phase {
-            // Surface what yt-dlp is doing before the first byte; phases only move forward.
-            let lower = line.lowercased()
-            var next: PrepPhase?
-            if lower.contains("solving") || lower.contains("challenge") {
-                next = .verifying
-            } else if lower.contains("m3u8") || lower.contains("manifest") || lower.contains("fragments") {
-                next = .preparingStream
-            } else if line.hasPrefix("[youtube]") || line.hasPrefix("[info]") {
-                next = .fetchingInfo
-            }
-            if let next, next > prep { phase = .preparing(next, t) }
-        }
-
-        // Use yt-dlp's raw "%" (fine-grained, ~10/sec). Skip the spurious first reading of each
-        // stream, keep it monotonic within the stream, and map onto the segment slice.
-        if parsePercent(line) != nil {
-            withTransfer { t in
-                guard let pct = self.parsePercent(line) else { return }
-                if t.segments.skipNextPct {
-                    t.segments.skipNextPct = false
-                } else {
-                    if pct > t.segments.rawPct { t.segments.rawPct = pct }
-                    let global = (Double(t.segments.current) * 100 + t.segments.rawPct) / Double(t.segments.expected)
-                    if global > t.progress {
-                        t.progress = global
-                        t.percentText = String(format: "%5.1f %%", global)
-                    }
-                }
-            }
-            // First real byte while preparing → we're downloading (drops the indeterminate bar).
-            if case .preparing(_, let t) = phase, t.progress > 0 {
-                phase = .downloading(t)
-            }
-        }
-        if let path = captureDestination(line) {
-            withTransfer { $0.filePath = path }
-        }
-    }
-
-    private func parsePercent(_ line: String) -> Double? {
-        guard let range = line.range(of: #"\[download\]\s+([\d.]+)%"#, options: .regularExpression) else { return nil }
-        let pctStr = String(line[range]).replacingOccurrences(of: "[download]", with: "")
-            .trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "%", with: "")
-        return Double(pctStr)
-    }
-
-    private func firstGroup(_ pattern: String, in line: String) -> String? {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
-        let ns = line as NSString
-        guard let m = regex.firstMatch(in: line, range: NSRange(location: 0, length: ns.length)),
-              m.numberOfRanges > 1 else { return nil }
-        return ns.substring(with: m.range(at: 1))
-    }
-
-    private func captureDestination(_ line: String) -> String? {
-        for prefix in ["[download] Destination: ", "[ExtractAudio] Destination: "] {
-            if line.hasPrefix(prefix) {
-                return String(line.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
-            }
-        }
-        if let range = line.range(of: #"\[Merger\] Merging formats into "(.+)""#, options: .regularExpression) {
-            let inner = String(line[range])
-            if let q1 = inner.firstIndex(of: "\""), let q2 = inner.lastIndex(of: "\""), q1 != q2 {
-                return String(inner[inner.index(after: q1)..<q2])
-            }
-        }
-        return nil
-    }
-
-    private func finishSuccess(history: HistoryStore, snapshot: DownloadSnapshot) {
-        let filePath = phase.transfer?.filePath
-        var sizeMB: Double?
-        if let path = filePath,
-           let attrs = try? FileManager.default.attributesOfItem(atPath: path),
-           let size = attrs[.size] as? Double {
-            sizeMB = size / (1024 * 1024)
-        }
-        let completion = Completion(snapshot: snapshot, filePath: filePath, sizeMB: sizeMB)
-        lastCompletion = completion
-        phase = .completed(completion)
-        if settings?.notificationsEnabled ?? true {
-            Notifier.notifyIfBackgrounded(title: tr("Téléchargement terminé", "Download complete"),
-                                          body: snapshot.title ?? "")
-        }
-
-        if let title = snapshot.title, !title.isEmpty {
-            let entry = HistoryEntry(title: title, url: snapshot.url,
-                                     thumbnailURL: snapshot.thumbnailURL,
-                                     downloadDate: Self.now(),
-                                     filePath: filePath)
-            history.add(entry)
-        }
-        if openFolderAfter { revealFolder() }
     }
 
     func cancelDownload() {
-        cancelled = true
-        activeProcess?.terminate()
-        // The transition to .cancelled is made in download() when runDownload returns.
+        activeEngine?.cancel()
     }
 
     // MARK: - Re-encode for Final Cut Pro
@@ -786,20 +585,4 @@ final class DownloadViewModel {
         }
     }
 
-    private func uniquePath(dir: String, base: String, ext: String) -> String {
-        let fm = FileManager.default
-        var candidate = "\(dir)/\(base).\(ext)"
-        var i = 1
-        while fm.fileExists(atPath: candidate) {
-            candidate = "\(dir)/\(base) (\(i)).\(ext)"
-            i += 1
-        }
-        return candidate
-    }
-
-    private static func now() -> String {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd HH:mm"
-        return f.string(from: Date())
-    }
 }
