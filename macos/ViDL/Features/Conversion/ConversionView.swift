@@ -225,45 +225,140 @@ private struct AdvancedSettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text(app.tr("Paramètres avancés", "Advanced Settings"))
-                .font(.rounded(20, .bold)).foregroundStyle(.white)
-            HStack(alignment: .top, spacing: 24) {
+        VStack(alignment: .leading, spacing: 22) {
+            header
+            HStack(alignment: .top, spacing: 14) {
                 if !vm.isAudioOutput {
-                    VStack(alignment: .leading, spacing: 12) {
-                        SectionHeader(symbol: "video", title: app.tr("Vidéo", "Video"))
-                        row(app.tr("Encodeur", "Encoder"), $vm.settings.videoEncoder, ConversionViewModel.videoEncoders)
-                        row("Bitrate", $vm.settings.videoBitrate, ConversionViewModel.videoBitrates)
-                        row(app.tr("Cadence", "Frame rate"), $vm.settings.videoFramerate, ConversionViewModel.videoFramerates)
-                        row(app.tr("Préréglage", "Preset"), $vm.settings.videoPreset, ConversionViewModel.videoPresets)
+                    settingsCard(symbol: "video.fill", title: app.tr("Vidéo", "Video")) {
+                        settingRow(app.tr("Encodeur", "Encoder"), $vm.settings.videoEncoder, ConversionViewModel.videoEncoders)
+                        settingRow("Bitrate", $vm.settings.videoBitrate, ConversionViewModel.videoBitrates)
+                        settingRow(app.tr("Cadence", "Frame rate"), $vm.settings.videoFramerate, ConversionViewModel.videoFramerates)
+                        settingRow(app.tr("Préréglage", "Preset"), $vm.settings.videoPreset, ConversionViewModel.videoPresets)
                     }
                 }
-                VStack(alignment: .leading, spacing: 12) {
-                    SectionHeader(symbol: "waveform", title: app.tr("Audio", "Audio"))
-                    row(app.tr("Encodeur", "Encoder"), $vm.settings.audioEncoder, ConversionViewModel.audioEncoders)
-                    row(app.tr("Canaux", "Channels"), $vm.settings.audioChannels, ConversionViewModel.audioChannelsOptions)
-                    row("Bitrate", $vm.settings.audioBitrate, ConversionViewModel.audioBitrates)
-                    row(app.tr("Échantillonnage", "Sample rate"), $vm.settings.sampleRate, ConversionViewModel.sampleRates)
+                settingsCard(symbol: "waveform", title: app.tr("Audio", "Audio")) {
+                    settingRow(app.tr("Encodeur", "Encoder"), $vm.settings.audioEncoder, ConversionViewModel.audioEncoders)
+                    settingRow(app.tr("Canaux", "Channels"), $vm.settings.audioChannels, ConversionViewModel.audioChannelsOptions)
+                    settingRow("Bitrate", $vm.settings.audioBitrate, ConversionViewModel.audioBitrates)
+                    settingRow(app.tr("Échantillonnage", "Sample rate"), $vm.settings.sampleRate, ConversionViewModel.sampleRates)
                 }
             }
-            HStack {
-                Spacer()
-                Button("OK") { dismiss() }.buttonStyle(AccentButtonStyle())
-            }
+            footer
         }
-        .padding(28)
-        .frame(width: 560)
+        .padding(26)
+        .frame(width: vm.isAudioOutput ? 380 : 640)
         .background(Theme.appBackground)
     }
 
-    private func row(_ label: String, _ selection: Binding<String>, _ options: [String]) -> some View {
+    private var header: some View {
+        HStack(spacing: 13) {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Theme.accentGradient)
+                .frame(width: 40, height: 40)
+                .overlay(Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 18, weight: .semibold)).foregroundStyle(.white))
+                .shadow(color: Theme.accent.opacity(0.4), radius: 8, y: 2)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(app.tr("Paramètres avancés", "Advanced Settings"))
+                    .font(.rounded(19, .bold)).foregroundStyle(.white)
+                Text(app.tr("Réglages d'encodage vidéo et audio", "Video and audio encoding settings"))
+                    .font(.rounded(12)).foregroundStyle(.white.opacity(0.5))
+            }
+            Spacer()
+        }
+    }
+
+    private var footer: some View {
+        HStack {
+            Button { resetAdvanced() } label: {
+                HStack(spacing: 6) { Image(systemName: "arrow.counterclockwise"); Text(app.tr("Réinitialiser", "Reset")) }
+            }
+            .buttonStyle(GhostButtonStyle())
+            Spacer()
+            Button(app.tr("Terminé", "Done")) { dismiss() }
+                .buttonStyle(AccentButtonStyle())
+                .keyboardShortcut(.defaultAction)
+        }
+    }
+
+    @ViewBuilder
+    private func settingsCard<Content: View>(symbol: String, title: String,
+                                             @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SectionHeader(symbol: symbol, title: title)
+            VStack(alignment: .leading, spacing: 11) { content() }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.white.opacity(0.04))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 1))
+        }
+    }
+
+    private func settingRow(_ label: String, _ selection: Binding<String>, _ options: [String]) -> some View {
         HStack(spacing: 10) {
-            Text(label).font(.rounded(12, .medium)).foregroundStyle(.white.opacity(0.6)).frame(width: 110, alignment: .leading)
-            Picker("", selection: selection) {
+            Text(label)
+                .font(.rounded(12, .medium)).foregroundStyle(.white.opacity(0.6))
+                .frame(width: 92, alignment: .leading)
+            FieldMenu(selection: selection, options: options)
+                .frame(maxWidth: .infinity)
+                .accessibilityLabel(label)
+        }
+    }
+
+    /// Resets only the encoding fields shown here — leaves output format / quality intact.
+    private func resetAdvanced() {
+        let d = ConversionSettings()
+        withAnimation(.easeOut(duration: 0.15)) {
+            vm.settings.videoEncoder = d.videoEncoder
+            vm.settings.videoBitrate = d.videoBitrate
+            vm.settings.videoFramerate = d.videoFramerate
+            vm.settings.videoPreset = d.videoPreset
+            vm.settings.audioEncoder = d.audioEncoder
+            vm.settings.audioChannels = d.audioChannels
+            vm.settings.audioBitrate = d.audioBitrate
+            vm.settings.sampleRate = d.sampleRate
+        }
+    }
+}
+
+/// Dark, field-styled dropdown matching the app — a custom trigger over a native
+/// inline Picker (so the popup keeps native checkmarks/keyboard handling).
+private struct FieldMenu: View {
+    @Binding var selection: String
+    let options: [String]
+    @State private var hovering = false
+
+    var body: some View {
+        Menu {
+            Picker(selection: $selection, label: EmptyView()) {
                 ForEach(options, id: \.self) { Text($0).tag($0) }
             }
-            .labelsHidden().frame(width: 150)
-            .accessibilityLabel(label)
+            .pickerStyle(.inline).labelsHidden()
+        } label: {
+            HStack(spacing: 8) {
+                Text(selection)
+                    .font(.rounded(12, .semibold)).foregroundStyle(.white)
+                    .lineLimit(1).truncationMode(.tail)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .bold)).foregroundStyle(.white.opacity(0.5))
+            }
+            .padding(.horizontal, 11).padding(.vertical, 8)
+            .background {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.black.opacity(0.28))
+                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color.white.opacity(hovering ? 0.22 : 0.10), lineWidth: 1))
+            }
+            .contentShape(Rectangle())
         }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }
