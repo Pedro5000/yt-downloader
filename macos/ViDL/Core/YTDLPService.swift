@@ -19,12 +19,15 @@ enum YTDLPService {
         let tbr: Double?
         let abr: Double?
         let language: String?
+        let language_preference: Int?
         let format_note: String?
     }
 
     private struct RawInfo: Decodable {
         let title: String?
         let uploader: String?
+        let channel_handle: String?
+        let uploader_id: String?
         let upload_date: String?
         let view_count: Int?
         let like_count: Int?
@@ -58,6 +61,13 @@ enum YTDLPService {
         var meta = VideoMeta()
         meta.title = info.title
         meta.uploader = info.uploader
+        // `channel_handle` is the modern field (e.g. "@MrBeast"); older extractors
+        // surface the same handle via `uploader_id` when it starts with "@".
+        if let h = info.channel_handle, !h.isEmpty {
+            meta.channelHandle = h
+        } else if let h = info.uploader_id, h.hasPrefix("@") {
+            meta.channelHandle = h
+        }
         if let raw = info.upload_date, raw.count == 8 {
             let y = raw.prefix(4), m = raw.dropFirst(4).prefix(2), d = raw.dropFirst(6).prefix(2)
             meta.uploadDate = "\(y)-\(m)-\(d)"
@@ -74,8 +84,15 @@ enum YTDLPService {
 
     private static func buildFormats(_ formats: [RawFormat]) -> ([VideoFormat], [AudioFormat]) {
         var audioOnly: [AudioFormat] = []
-        var bestAudioMP4: (id: String, abr: Int)? = nil
-        var bestAudioAny: (id: String, abr: Int)? = nil
+        // We pick "best audio" for video+audio combos in Auto mode. YouTube increasingly
+        // ships AI dubs (often at higher bitrate than the original), so picking purely on
+        // ABR ends up grabbing a random language. Prefer formats marked as original
+        // (yt-dlp's `language_preference >= 0`, or "original" in the note) and fall back
+        // to plain highest-ABR only if nothing original was found.
+        var bestAudioMP4Original: (id: String, abr: Int)? = nil
+        var bestAudioMP4Any: (id: String, abr: Int)? = nil
+        var bestAudioAnyOriginal: (id: String, abr: Int)? = nil
+        var bestAudioAnyAny: (id: String, abr: Int)? = nil
 
         // (w, h, fps) -> best tbr
         var muxed: [Key: (id: String, tbr: Int)] = [:]
@@ -91,14 +108,28 @@ enum YTDLPService {
 
             if !hasVideo && hasAudio {
                 let abr = Int((f.abr ?? f.tbr ?? 0).rounded())
+                let isOriginal = (f.language_preference ?? -1) >= 0 || note.contains("original")
                 var label = "\(f.format_id) | \(ext) audio"
                 if abr > 0 { label += " \(abr)k" }
-                if let lang = f.language, !lang.isEmpty { label += " [\(lang)]" }
-                audioOnly.append(AudioFormat(id: f.format_id, label: label))
-                if ext == "m4a" || ext == "mp4" {
-                    if bestAudioMP4 == nil || abr > bestAudioMP4!.abr { bestAudioMP4 = (f.format_id, abr) }
+                if let lang = f.language, !lang.isEmpty {
+                    label += isOriginal ? " [\(lang) original]" : " [\(lang)]"
                 }
-                if bestAudioAny == nil || abr > bestAudioAny!.abr { bestAudioAny = (f.format_id, abr) }
+                audioOnly.append(AudioFormat(id: f.format_id, label: label))
+                let isMP4 = (ext == "m4a" || ext == "mp4")
+                if isMP4 {
+                    if bestAudioMP4Any == nil || abr > bestAudioMP4Any!.abr {
+                        bestAudioMP4Any = (f.format_id, abr)
+                    }
+                    if isOriginal, bestAudioMP4Original == nil || abr > bestAudioMP4Original!.abr {
+                        bestAudioMP4Original = (f.format_id, abr)
+                    }
+                }
+                if bestAudioAnyAny == nil || abr > bestAudioAnyAny!.abr {
+                    bestAudioAnyAny = (f.format_id, abr)
+                }
+                if isOriginal, bestAudioAnyOriginal == nil || abr > bestAudioAnyOriginal!.abr {
+                    bestAudioAnyOriginal = (f.format_id, abr)
+                }
             } else if hasVideo {
                 guard ext == "mp4", let w = f.width, let h = f.height else { continue }
                 let fps = Int((f.fps ?? 30).rounded())
@@ -111,7 +142,12 @@ enum YTDLPService {
             }
         }
 
-        let bestAudio = bestAudioMP4 ?? bestAudioAny
+        // Prefer original-language audio in MP4 (cleanest mux), then any original,
+        // then highest-ABR MP4, then highest-ABR overall.
+        let bestAudio = bestAudioMP4Original
+            ?? bestAudioAnyOriginal
+            ?? bestAudioMP4Any
+            ?? bestAudioAnyAny
 
         var result: [VideoFormat] = []
         let keys = Set(muxed.keys).union(videoOnly.keys)
@@ -144,6 +180,7 @@ enum YTDLPService {
                                   formatID: String,
                                   exportType: ExportType,
                                   audioLanguage: String,
+                                  mp3Bitrate: String,
                                   outputPath: String,
                                   useCookies: Bool) -> [String] {
         let isAuto = audioLanguage.lowercased() == "auto"
@@ -160,12 +197,12 @@ enum YTDLPService {
                 args = ["-f", formatID, "--merge-output-format", "mp4", "-S", "lang:\(audioLanguage)"]
             }
         } else {
-            if isAuto {
-                args = ["-f", formatID, "--extract-audio", "--audio-format", "mp3"]
-            } else {
-                let expr = "ba[language^=\(audioLanguage)]/bestaudio"
-                args = ["-f", expr, "--extract-audio", "--audio-format", "mp3", "-S", "lang:\(audioLanguage)"]
-            }
+            // MP3: always take the best available audio (optionally for a given language)
+            // and let ffmpeg encode to the chosen output bitrate. Which source stream it
+            // came from is irrelevant once re-encoded, so we don't expose it.
+            let selector = isAuto ? "bestaudio/best" : "ba[language^=\(audioLanguage)]/bestaudio/best"
+            args = ["-f", selector, "--extract-audio", "--audio-format", "mp3", "--audio-quality", "\(mp3Bitrate)K"]
+            if !isAuto { args += ["-S", "lang:\(audioLanguage)"] }
         }
 
         args += ["--no-playlist", "--newline", "-o", outputPath]

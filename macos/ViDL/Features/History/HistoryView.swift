@@ -89,10 +89,24 @@ struct HistoryView: View {
                 RemoteThumbnail(urlString: entry.thumbnailURL, width: 96, height: 54, cornerRadius: 8)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(entry.title).font(.rounded(14, .semibold)).foregroundStyle(.white).lineLimit(1)
-                    Text(entry.url).font(.rounded(11)).foregroundStyle(.white.opacity(0.4)).lineLimit(1).truncationMode(.middle)
-                    Text(entry.downloadDate).font(.rounded(10)).foregroundStyle(.white.opacity(0.3))
+                    Text(entry.url).font(.rounded(11)).foregroundStyle(.white.opacity(0.6)).lineLimit(1).truncationMode(.middle)
+                    Text(entry.downloadDate).font(.rounded(10)).foregroundStyle(.white.opacity(0.5))
                 }
                 Spacer()
+                Button {
+                    app.openInDownload(entry.url)
+                } label: { Image(systemName: "arrow.down.circle") }
+                    .buttonStyle(IconButtonStyle())
+                    .help(app.tr("Télécharger à nouveau", "Download again"))
+                    .accessibilityLabel(app.tr("Réutiliser cette URL pour télécharger", "Reuse this URL to download"))
+                if let path = entry.filePath, FileManager.default.fileExists(atPath: path) {
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+                    } label: { Image(systemName: "folder") }
+                        .buttonStyle(IconButtonStyle())
+                        .help(app.tr("Afficher dans le Finder", "Show in Finder"))
+                        .accessibilityLabel(app.tr("Afficher le fichier dans le Finder", "Show file in Finder"))
+                }
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(entry.url, forType: .string)
@@ -101,11 +115,13 @@ struct HistoryView: View {
                 } label: { Image(systemName: "doc.on.clipboard") }
                     .buttonStyle(IconButtonStyle())
                     .help(app.tr("Copier l'URL", "Copy URL"))
+                    .accessibilityLabel(app.tr("Copier l'URL", "Copy URL"))
                 Button {
                     history.delete(entry)
                 } label: { Image(systemName: "trash") }
                     .buttonStyle(IconButtonStyle())
                     .help(app.tr("Supprimer", "Delete"))
+                    .accessibilityLabel(app.tr("Supprimer de l'historique", "Delete from history"))
             }
         }
     }

@@ -15,14 +15,21 @@ struct DownloadView: View {
                                                     "yt-dlp not found. Install it to analyze and download:"),
                                       command: "brew install yt-dlp")
                     }
+                    if vm.hasMissingFFmpeg {
+                        WarningBanner(title: app.tr("ffmpeg est introuvable. Il est requis pour assembler les MP4 et extraire les MP3 :",
+                                                    "ffmpeg not found. It's required to merge MP4s and extract MP3s:"),
+                                      command: "brew install ffmpeg")
+                    }
                     analyzeCard
-                    if vm.meta != nil { infoCard }
-                    optionsCard
+                    if vm.meta != nil {
+                        infoCard
+                        optionsCard
+                    }
                 }
                 .padding(28)
             }
             .scrollContentBackground(.hidden)
-            if vm.downloading || vm.progress > 0 || !vm.statusText.isEmpty {
+            if vm.phase.footerVisible {
                 progressFooter
             }
         }
@@ -33,6 +40,12 @@ struct DownloadView: View {
             return true
         }
         .onAppear { vm.app = app }
+        .onChange(of: app.pendingURL) { _, newValue in
+            guard let newValue, !newValue.isEmpty else { return }
+            vm.url = newValue
+            app.pendingURL = nil
+            Task { await vm.analyze() }
+        }
         .alert(app.tr("Attention", "Warning"),
                isPresented: Binding(get: { vm.errorMessage != nil }, set: { if !$0 { vm.errorMessage = nil } })) {
             Button("OK") { vm.errorMessage = nil }
@@ -70,6 +83,7 @@ struct DownloadView: View {
                     } label: { Image(systemName: "doc.on.clipboard") }
                         .buttonStyle(IconButtonStyle())
                         .help(app.tr("Coller", "Paste"))
+                        .accessibilityLabel(app.tr("Coller l'URL", "Paste URL"))
                     Button {
                         Task { await vm.analyze() }
                     } label: {
@@ -102,11 +116,18 @@ struct DownloadView: View {
                         .buttonStyle(IconButtonStyle())
                         .padding(6)
                         .help(app.tr("Télécharger la miniature", "Download thumbnail"))
+                        .accessibilityLabel(app.tr("Télécharger la miniature", "Download thumbnail"))
                 }
                 VStack(alignment: .leading, spacing: 7) {
                     if let title = vm.meta?.title {
-                        Text(title).font(.rounded(16, .bold)).foregroundStyle(.white)
+                        titleWithStatus(title)
+                            .font(.rounded(16, .bold))
+                            .foregroundStyle(.white)
                             .lineLimit(2)
+                            .help(vm.justDownloaded ? app.tr("Téléchargée", "Downloaded") : "")
+                            .accessibilityLabel(vm.justDownloaded
+                                                ? app.tr("\(title) — téléchargée", "\(title) — downloaded")
+                                                : title)
                     }
                     if let ch = vm.meta?.uploader {
                         InfoRow(label: app.tr("Chaîne", "Channel"), value: ch)
@@ -142,18 +163,20 @@ struct DownloadView: View {
             VStack(alignment: .leading, spacing: 14) {
                 SectionHeader(symbol: "slider.horizontal.3", title: app.tr("Options de téléchargement", "Download Options"))
 
-                Picker("", selection: $vm.exportType) {
-                    Text("MP4").tag(ExportType.mp4)
-                    Text("MP3").tag(ExportType.mp3)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 200)
-                .onChange(of: vm.exportType) { _, _ in vm.onExportTypeChange() }
-
                 HStack(spacing: 10) {
-                    Text(app.tr("Format d'origine", "Source format"))
+                    Picker("", selection: $vm.exportType) {
+                        Text("MP4").tag(ExportType.mp4)
+                        Text("MP3").tag(ExportType.mp3)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()   // intrinsic width, flush-left with the section header & Dossier
+                    .accessibilityLabel(app.tr("Format d'export", "Export format"))
+                    .onChange(of: vm.exportType) { _, _ in vm.onExportTypeChange() }
+
+                    Text("Format")
                         .font(.rounded(12, .medium)).foregroundStyle(.white.opacity(0.6))
+
                     if vm.exportType == .mp4 {
                         Picker("", selection: $vm.selectedVideoFormatID) {
                             ForEach(vm.videoFormats) { f in
@@ -161,24 +184,29 @@ struct DownloadView: View {
                             }
                         }
                         .labelsHidden()
-                        .frame(maxWidth: 320)
+                        .frame(width: 200)
+                        .accessibilityLabel("Format")
                     } else {
-                        Picker("", selection: $vm.selectedAudioFormatID) {
-                            ForEach(vm.audioFormats) { f in
-                                Text(f.label).tag(Optional(f.id))
+                        Picker("", selection: $vm.mp3Bitrate) {
+                            ForEach(DownloadViewModel.mp3Bitrates, id: \.self) { b in
+                                Text("\(b) kbps").tag(b)
                             }
                         }
                         .labelsHidden()
-                        .frame(maxWidth: 320)
+                        .frame(width: 200)
+                        .accessibilityLabel("Format")
                     }
+
                     Spacer()
+
                     Text(app.tr("Langue audio", "Audio language"))
                         .font(.rounded(12, .medium)).foregroundStyle(.white.opacity(0.6))
                     Picker("", selection: $vm.audioLanguage) {
                         ForEach(DownloadViewModel.audioLanguages, id: \.self) { Text($0).tag($0) }
                     }
                     .labelsHidden()
-                    .frame(width: 110)
+                    .frame(width: 100)
+                    .accessibilityLabel(app.tr("Langue audio", "Audio language"))
                 }
 
                 HStack(spacing: 12) {
@@ -192,7 +220,7 @@ struct DownloadView: View {
                     }
                     .buttonStyle(GhostButtonStyle())
                     Text((vm.outputDirPath as NSString).abbreviatingWithTildeInPath)
-                        .font(.rounded(11)).foregroundStyle(.white.opacity(0.45))
+                        .font(.rounded(11)).foregroundStyle(.white.opacity(0.6))
                         .lineLimit(1).truncationMode(.middle)
                     Spacer()
                     Toggle(app.tr("Ouvrir à la fin", "Open when done"), isOn: $vm.openFolderAfter)
@@ -202,13 +230,14 @@ struct DownloadView: View {
                 }
 
                 HStack(spacing: 12) {
-                    if vm.downloading {
+                    if vm.phase.isTransferring {
                         Button {
                             vm.cancelDownload()
                         } label: {
                             HStack(spacing: 6) { Image(systemName: "xmark"); Text(app.tr("Annuler", "Cancel")) }
                         }
                         .buttonStyle(GhostButtonStyle(tint: Theme.danger))
+                        .keyboardShortcut(.cancelAction)
                     }
                     Spacer()
                     Button {
@@ -220,7 +249,9 @@ struct DownloadView: View {
                         }
                     }
                     .buttonStyle(AccentButtonStyle(gradient: Theme.successGradient))
-                    .disabled(vm.downloading)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(vm.phase.isBusy || vm.meta == nil)
+                    .help(vm.meta == nil ? app.tr("Analysez une vidéo d'abord", "Analyze a video first") : "")
                 }
             }
         }
@@ -234,27 +265,38 @@ struct DownloadView: View {
                     NeonProgressBar(value: vm.displayProgress,
                                     gradient: vm.displayProgress >= 99.5 ? Theme.successGradient : Theme.accentGradient,
                                     animated: false)
-                    if vm.downloading && vm.progress <= 0 {
+                    if vm.phase.showsIndeterminate {
                         IndeterminateBar()
                             .transition(.opacity)
                     }
                 }
-                .animation(.easeInOut(duration: 0.3), value: vm.progress <= 0)
+                .animation(.easeInOut(duration: 0.3), value: vm.phase.showsIndeterminate)
                 HStack(spacing: 10) {
-                    Text(vm.statusText).font(.rounded(12, .medium)).foregroundStyle(.white.opacity(0.7))
-                    if !downloadDetail.isEmpty {
-                        Text(downloadDetail)
+                    Text(vm.statusLine).font(.rounded(12, .medium)).foregroundStyle(.white.opacity(0.7))
+                    if !vm.detailLine.isEmpty {
+                        Text(vm.detailLine)
                             .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.45))
+                            .foregroundStyle(.white.opacity(0.6))
                     }
                     Spacer()
-                    if vm.showReencode {
+                    if vm.phase.revealableFile != nil {
+                        Button {
+                            vm.revealFolder()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "folder")
+                                Text(app.tr("Afficher dans le Finder", "Show in Finder"))
+                            }
+                        }
+                        .buttonStyle(GhostButtonStyle())
+                    }
+                    if vm.phase.offersReencode || vm.phase.isReencoding {
                         Button {
                             Task { await vm.reencode() }
                         } label: {
                             HStack(spacing: 6) {
-                                Image(systemName: vm.encoding ? "stop.fill" : "film")
-                                Text(vm.encoding ? app.tr("Arrêter", "Stop") : app.tr("Re-encoder MP4", "Re-encode MP4"))
+                                Image(systemName: vm.phase.isReencoding ? "stop.fill" : "film")
+                                Text(vm.phase.isReencoding ? app.tr("Arrêter", "Stop") : app.tr("Re-encoder MP4", "Re-encode MP4"))
                             }
                         }
                         .buttonStyle(GhostButtonStyle(tint: Theme.accent))
@@ -267,19 +309,20 @@ struct DownloadView: View {
         .background(.ultraThinMaterial)
     }
 
-    private var downloadDetail: String {
-        var parts: [String] = []
-        if !vm.percentText.isEmpty { parts.append(vm.percentText) }
-        if !vm.speedText.isEmpty { parts.append(vm.speedText) }
-        if !vm.etaText.isEmpty { parts.append("ETA \(vm.etaText)") }
-        return parts.joined(separator: " · ")
+    /// The video title with an inline green seal appended once it's been downloaded,
+    /// so confirming success never adds a row that shoves the options under the footer.
+    private func titleWithStatus(_ title: String) -> Text {
+        guard vm.justDownloaded else { return Text(title) }
+        return Text(title) + Text("  ")
+            + Text(Image(systemName: "checkmark.seal.fill")).foregroundColor(Theme.success)
     }
 
     private func formatLabel(_ f: VideoFormat) -> String {
-        var s = "\(f.width)x\(f.height), \(f.fps)fps, \(f.tbr) kbps"
+        let p = min(f.width, f.height)   // vertical resolution, even for portrait video
+        var s = "\(p)p · \(f.fps) fps"
         if let d = vm.meta?.duration {
             let mb = Double(f.tbr) * d / 8192
-            s += String(format: ", ~%.0f MB", mb)
+            s += String(format: " · ~%.0f MB", mb)
         }
         return s
     }

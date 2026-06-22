@@ -2,6 +2,157 @@ import SwiftUI
 import AppKit
 import Observation
 
+// MARK: - Transfer state machine
+//
+// The footer/progress UI used to be spread across ~13 mutually-dependent flags
+// (downloading, encoding, footerActive, justDownloaded, showReencode, progress,
+// statusText, percentText…). That made illegal combinations representable and was
+// the root of the "footer jumps / not cleared / wrong video" bugs. It's now a single
+// source of truth — `phase: TransferPhase` — from which all presentation is *derived*.
+
+/// Pre-first-byte stages, surfaced so the indeterminate bar doesn't look stuck.
+/// Ranked so labels only ever move forward (yt-dlp interleaves [info] lines).
+enum PrepPhase: Int, Comparable {
+    case cookies = -1        // age-restricted retry with Firefox cookies
+    case starting = 0        // generic "Preparing…"
+    case fetchingInfo = 1
+    case verifying = 2
+    case preparingStream = 3
+    static func < (a: PrepPhase, b: PrepPhase) -> Bool { a.rawValue < b.rawValue }
+}
+
+enum FinalizeKind: Equatable { case merging, extracting }
+
+/// Immutable identity of a download, captured at start so a concurrent re-analysis
+/// (which mutates `meta`) can't make the completion handler mislabel the file.
+struct DownloadSnapshot: Equatable {
+    let title: String?
+    let url: String
+    let thumbnailURL: String?
+    let exportType: ExportType
+}
+
+/// Maps yt-dlp's per-stream 0→100 onto a global bar. Segment boundaries come from
+/// "[download] Destination:" lines (reliable), not the non-monotonic percentage.
+struct SegmentTracker: Equatable {
+    var expected = 1
+    var current = 0
+    var fileCount = 0
+    var skipNextPct = true   // drops yt-dlp's spurious first reading of each stream
+    var rawPct = 0.0         // monotonic raw % within the current stream
+}
+
+/// Live data of an in-flight download. Carried inside the phase so it can't outlive
+/// the job (no stale percent/speed after completion) and travels with its identity.
+struct Transfer: Equatable {
+    let snapshot: DownloadSnapshot
+    let outputPath: String
+    var progress: Double = 0
+    var percentText: String = ""
+    var speedText: String = ""
+    var etaText: String = ""
+    var filePath: String?
+    var segments = SegmentTracker()
+}
+
+/// Result of a finished download.
+struct Completion: Equatable {
+    let snapshot: DownloadSnapshot
+    let filePath: String?
+    let sizeMB: Double?
+    var offersReencode: Bool { snapshot.exportType == .mp4 && filePath != nil }
+}
+
+enum TransferPhase: Equatable {
+    /// No active or finished job to show → footer absent.
+    case none
+
+    case preparing(PrepPhase, Transfer)        // before first byte → indeterminate bar
+    case downloading(Transfer)                 // bytes flowing → determinate 0…100
+    case finalizing(FinalizeKind, Transfer)    // yt-dlp muxing / extracting
+
+    case completed(Completion)
+    case failed(String)
+    case cancelled
+
+    case reencoding(Double)
+    case reencoded(String)                     // path of the re-encoded file
+    case reencodeFailed(String)
+}
+
+extension TransferPhase {
+    /// The in-flight transfer, if the current phase carries one.
+    var transfer: Transfer? {
+        switch self {
+        case .preparing(_, let t), .downloading(let t), .finalizing(_, let t): return t
+        default: return nil
+        }
+    }
+
+    var footerVisible: Bool { self != .none }
+
+    var showsIndeterminate: Bool {
+        if case .preparing = self { return true }
+        return false
+    }
+
+    /// The real target the eased `displayProgress` chases (0…100).
+    var targetProgress: Double {
+        switch self {
+        case .preparing(_, let t), .downloading(let t), .finalizing(_, let t): return t.progress
+        case .completed, .reencoded:        return 100
+        case .reencoding(let p):            return p
+        case .none, .failed, .cancelled, .reencodeFailed: return 0
+        }
+    }
+
+    /// A process is running → disable "Download", keep the eased bar alive.
+    var isBusy: Bool {
+        switch self {
+        case .preparing, .downloading, .finalizing, .reencoding: return true
+        default: return false
+        }
+    }
+
+    /// A download (not a re-encode) is in flight → show "Cancel".
+    var isTransferring: Bool {
+        switch self {
+        case .preparing, .downloading, .finalizing: return true
+        default: return false
+        }
+    }
+
+    var isReencoding: Bool {
+        if case .reencoding = self { return true }
+        return false
+    }
+
+    /// A finished job whose footer we keep on screen, ready to be emptied on re-analysis.
+    var isTerminal: Bool {
+        switch self {
+        case .completed, .failed, .cancelled, .reencoded, .reencodeFailed: return true
+        default: return false
+        }
+    }
+
+    /// File available to reveal in the Finder (only after a successful job).
+    var revealableFile: String? {
+        switch self {
+        case .completed(let c): return c.filePath
+        case .reencoded(let p): return p
+        default:                return nil
+        }
+    }
+
+    var offersReencode: Bool {
+        switch self {
+        case .completed(let c): return c.offersReencode
+        case .reencoded:        return true   // re-available after a first re-encode
+        default:                return false
+        }
+    }
+}
+
 @Observable
 @MainActor
 final class DownloadViewModel {
@@ -15,8 +166,12 @@ final class DownloadViewModel {
 
     var exportType: ExportType = .mp4
     var selectedVideoFormatID: String?
-    var selectedAudioFormatID: String?
     var audioLanguage = "Auto"
+    /// Output MP3 bitrate (kbps). MP3 always re-encodes the best source audio, so this
+    /// is what actually controls quality — not which source stream is picked.
+    var mp3Bitrate: String = UserDefaults.standard.string(forKey: "mp3Bitrate") ?? "320" {
+        didSet { UserDefaults.standard.set(mp3Bitrate, forKey: "mp3Bitrate") }
+    }
 
     private static var defaultDownloads: String {
         FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first?.path
@@ -29,16 +184,13 @@ final class DownloadViewModel {
         didSet { UserDefaults.standard.set(openFolderAfter, forKey: "openFolderAfter") }
     }
 
-    var downloading = false
-    var progress: Double = 0          // real target driven by yt-dlp/ffmpeg
-    var displayProgress: Double = 0   // eased value shown by the bar
-    var statusText = ""
-    var percentText = ""
-    var speedText = ""
-    var etaText = ""
-    var downloadedFilePath: String?
-    var showReencode = false
-    var encoding = false
+    /// Single source of truth for everything the footer/progress shows.
+    var phase: TransferPhase = .none
+    /// Eased value the bar actually draws (~60fps), chasing `phase.targetProgress`.
+    var displayProgress: Double = 0
+    /// The last successful download, kept so the on-screen card can show "Downloaded"
+    /// only while it still displays that very video.
+    private var lastCompletion: Completion?
 
     var errorMessage: String?
     private var lastErrorLine: String?
@@ -47,27 +199,71 @@ final class DownloadViewModel {
     private func tr(_ fr: String, _ en: String) -> String { app?.tr(fr, en) ?? fr }
 
     static let audioLanguages = ["Auto", "en", "pl", "fr", "de", "es", "it", "pt", "ja", "ko", "zh-Hans", "zh-Hant"]
+    static let mp3Bitrates = ["320", "256", "192", "128"]
 
     private var activeProcess: ManagedProcess?
     private var cancelled = false
     private var ageDetected = false
     private var cancelReencode = false
-
-    // Multi-stream progress mapping (yt-dlp downloads each stream 0→100 separately).
-    // Segment boundaries are detected from "[download] Destination:" lines, which reliably
-    // mark each new stream — unlike the percentage, which is non-monotonic for fragmented DASH.
-    private var expectedSegments = 1
-    private var currentSegment = 0
-    private var downloadFileCount = 0
-    private var prepPhaseRank = 0
-    private var skipNextPct = true       // drops yt-dlp's spurious first reading of each stream
-    private var segmentRawPct = 0.0      // monotonic raw % within the current stream
     private var smoothTask: Task<Void, Never>?
+
+    // MARK: - Derived presentation
+
+    /// The on-screen card's "Downloaded" mark: true only when the displayed video is
+    /// the one we actually downloaded (the user may have analyzed a different URL since).
+    var justDownloaded: Bool {
+        guard let lastCompletion, let title = meta?.title else { return false }
+        return lastCompletion.snapshot.title == title
+    }
+
+    /// Footer status line, localized, derived entirely from `phase`.
+    var statusLine: String {
+        switch phase {
+        case .none:                        return ""
+        case .preparing(.cookies, _):      return tr("Vidéo restreinte → cookies Firefox…", "Age-restricted → Firefox cookies…")
+        case .preparing(.starting, _):     return tr("Préparation…", "Preparing…")
+        case .preparing(.fetchingInfo, _): return tr("Récupération des informations…", "Fetching video info…")
+        case .preparing(.verifying, _):    return tr("Vérification YouTube…", "Verifying with YouTube…")
+        case .preparing(.preparingStream, _): return tr("Préparation du flux…", "Preparing stream…")
+        case .downloading:                 return tr("Téléchargement…", "Downloading…")
+        case .finalizing(.merging, _):     return tr("Fusion des pistes…", "Merging streams…")
+        case .finalizing(.extracting, _):  return tr("Extraction audio…", "Extracting audio…")
+        case .completed(let c):
+            let sz = c.sizeMB.map { String(format: " (%.1f MB)", $0) } ?? ""
+            return tr("Téléchargement terminé\(sz).", "Download complete\(sz).")
+        case .failed(let m):               return m
+        case .cancelled:                   return tr("Téléchargement arrêté. Fichiers incomplets supprimés.",
+                                                     "Download stopped. Incomplete files removed.")
+        case .reencoding(let p):           return String(format: tr("Ré-encodage… %.1f %%", "Re-encoding… %.1f%%"), p)
+        case .reencoded:                   return tr("Fichier MP4 ré-encodé et optimisé.", "MP4 re-encoded and optimized.")
+        case .reencodeFailed(let m):       return m
+        }
+    }
+
+    /// Footer detail line (%/speed/ETA), present only during an active transfer.
+    var detailLine: String {
+        guard let t = phase.transfer else { return "" }
+        var parts: [String] = []
+        if !t.percentText.isEmpty { parts.append(t.percentText) }
+        if !t.speedText.isEmpty { parts.append(t.speedText) }
+        if !t.etaText.isEmpty { parts.append("ETA \(t.etaText)") }
+        return parts.joined(separator: " · ")
+    }
+
+    /// Mutates the in-flight transfer in place (no-op outside transfer phases).
+    private func withTransfer(_ body: (inout Transfer) -> Void) {
+        switch phase {
+        case .preparing(let p, var t): body(&t); phase = .preparing(p, t)
+        case .downloading(var t):      body(&t); phase = .downloading(t)
+        case .finalizing(let k, var t): body(&t); phase = .finalizing(k, t)
+        default: break
+        }
+    }
 
     // MARK: - Smooth progress follower
 
-    /// Continuously eases `displayProgress` toward `progress` (~60fps), like the original app.
-    /// If the real progress stalls, the bar catches up and quietly stops.
+    /// Continuously eases `displayProgress` toward `phase.targetProgress` (~60fps),
+    /// like the original app. If progress stalls, the bar catches up and quietly stops.
     private func startSmoothing() {
         smoothTask?.cancel()
         smoothTask = Task { [weak self] in
@@ -79,12 +275,13 @@ final class DownloadViewModel {
         }
     }
 
-    /// Returns true when smoothing should stop (converged and no operation running).
+    /// Returns true when smoothing should stop (converged and nothing running).
     private func tickSmoothing() -> Bool {
-        let diff = progress - displayProgress
+        let target = phase.targetProgress
+        let diff = target - displayProgress
         if abs(diff) < 0.1 {
-            displayProgress = progress
-            return !downloading && !encoding
+            displayProgress = target
+            return !phase.isBusy
         }
         // Same easing rhythm as the original app (step = diff * 0.2 @ 20fps → τ ≈ 0.22s).
         displayProgress += diff * 0.073
@@ -92,6 +289,9 @@ final class DownloadViewModel {
     }
 
     var hasMissingBinaries: Bool { BinaryLocator.ytDlp == nil }
+    /// ffmpeg is needed to merge video+audio for MP4 and to extract MP3 — warn even
+    /// when yt-dlp is present, otherwise the failure only surfaces mid-download.
+    var hasMissingFFmpeg: Bool { BinaryLocator.ffmpeg == nil }
 
     // MARK: - Analyze
 
@@ -118,7 +318,14 @@ final class DownloadViewModel {
         videoFormats = []
         audioFormats = []
         selectedVideoFormatID = nil
-        selectedAudioFormatID = nil
+        // A new analysis means moving on to another video — clear the previous job's
+        // footer entirely (an empty bar would say nothing, and a stale "done" message
+        // would be misleading). No-op while a job runs: that transfer still owns the
+        // footer (the analyze-during-download case).
+        if phase.isTerminal {
+            phase = .none
+            displayProgress = 0
+        }
 
         var (result, ageRestricted) = await YTDLPService.analyze(url: trimmed)
         if result == nil && ageRestricted {
@@ -139,18 +346,15 @@ final class DownloadViewModel {
     }
 
     private func selectDefaultFormat() {
-        if exportType == .mp4 {
-            // Prefer 1080p, else 720p, else best (last).
-            var chosen = videoFormats.last?.id
-            for f in videoFormats {
-                let h = min(f.height, f.width)
-                if h == 1080 { chosen = f.id; break }
-                if h == 720 { chosen = f.id }
-            }
-            selectedVideoFormatID = chosen
-        } else {
-            selectedAudioFormatID = audioFormats.first?.id
+        guard exportType == .mp4 else { return }   // MP3 quality is the output bitrate, not a source stream
+        // Prefer 1080p, else 720p, else best (last).
+        var chosen = videoFormats.last?.id
+        for f in videoFormats {
+            let h = min(f.height, f.width)
+            if h == 1080 { chosen = f.id; break }
+            if h == 720 { chosen = f.id }
         }
+        selectedVideoFormatID = chosen
     }
 
     func onExportTypeChange() { selectDefaultFormat() }
@@ -173,70 +377,75 @@ final class DownloadViewModel {
             guard let id = selectedVideoFormatID else { errorMessage = tr("Analysez la vidéo d'abord.", "Analyze the video first."); return }
             formatID = id
         } else {
-            guard let id = selectedAudioFormatID else { errorMessage = tr("Analysez la vidéo d'abord.", "Analyze the video first."); return }
-            formatID = id
+            guard meta != nil else { errorMessage = tr("Analysez la vidéo d'abord.", "Analyze the video first."); return }
+            formatID = ""   // MP3 uses best-audio selection in the service
         }
 
-        let base = Formatting.sanitizeFilename(meta?.title ?? "video")
-        let ext = exportType == .mp4 ? "mp4" : "mp3"
-        let outputPath = uniquePath(dir: outputDirPath, base: base.isEmpty ? "video" : base, ext: ext)
+        let snapshot = DownloadSnapshot(title: meta?.title, url: trimmed,
+                                        thumbnailURL: meta?.thumbnailURL, exportType: exportType)
 
-        downloadedFilePath = nil
-        progress = 0
-        displayProgress = 0
-        speedText = ""
-        etaText = ""
-        percentText = ""
+        let raw = Formatting.sanitizeFilename(meta?.title ?? "video")
+        let stem = raw.isEmpty ? "video" : raw
+        // Suffix is a marker for downstream tools (e.g. Quarry's downloads sorter
+        // exempts files containing "_vidl"). When yt-dlp surfaces the channel
+        // handle, append it after the marker so the source channel is visible
+        // in the filename: "<title>_vidl_@handle.ext".
+        let handle = Formatting.sanitizeFilename(meta?.channelHandle ?? "")
+        let base = handle.isEmpty ? stem + "_vidl" : stem + "_vidl_" + handle
+        let ext = exportType == .mp4 ? "mp4" : "mp3"
+        let outputPath = uniquePath(dir: outputDirPath, base: base, ext: ext)
+
         lastErrorLine = nil
-        startSmoothing()
-        statusText = tr("Préparation…", "Preparing…")
-        showReencode = false
         cancelled = false
         ageDetected = false
-        downloading = true
-        expectedSegments = formatID.contains("+") ? 2 : 1
-        currentSegment = 0
-        downloadFileCount = 0
-        prepPhaseRank = 0
-        skipNextPct = true
-        segmentRawPct = 0
+        displayProgress = 0
+
+        var transfer = Transfer(snapshot: snapshot, outputPath: outputPath)
+        transfer.segments.expected = formatID.contains("+") ? 2 : 1
+        phase = .preparing(.starting, transfer)
+        startSmoothing()
 
         let args = YTDLPService.downloadArguments(url: trimmed, formatID: formatID,
                                                   exportType: exportType, audioLanguage: audioLanguage,
+                                                  mp3Bitrate: mp3Bitrate,
                                                   outputPath: outputPath, useCookies: false)
         var status = await runDownload(executable: ytDlp, args: args)
 
         if status != 0 && ageDetected && !cancelled {
-            statusText = tr("Vidéo restreinte → cookies Firefox…", "Age-restricted → Firefox cookies…")
             ageDetected = false
-            progress = 0
-            displayProgress = 0
-            currentSegment = 0
-            downloadFileCount = 0
-            prepPhaseRank = 0
-            skipNextPct = true
-            segmentRawPct = 0
+            var fresh = Transfer(snapshot: snapshot, outputPath: outputPath)
+            fresh.segments.expected = formatID.contains("+") ? 2 : 1
+            phase = .preparing(.cookies, fresh)
             let cookieArgs = YTDLPService.downloadArguments(url: trimmed, formatID: formatID,
                                                             exportType: exportType, audioLanguage: audioLanguage,
+                                                            mp3Bitrate: mp3Bitrate,
                                                             outputPath: outputPath, useCookies: true)
             status = await runDownload(executable: ytDlp, args: cookieArgs)
         }
 
-        downloading = false
         activeProcess = nil
-        speedText = ""
-        etaText = ""
-        percentText = ""
 
         if status == 0 {
-            finishSuccess(history: history)
+            finishSuccess(history: history, snapshot: snapshot)
         } else if cancelled {
-            statusText = tr("Téléchargement arrêté.", "Download stopped.")
-            progress = 0
+            cleanupIncompleteFiles(outputPath: outputPath)
+            phase = .cancelled
         } else {
-            statusText = tr("Échec du téléchargement.", "Download failed.")
-            progress = 0
+            phase = .failed(tr("Échec du téléchargement.", "Download failed."))
             errorMessage = cleanedError() ?? tr("Échec du téléchargement.", "Download failed.")
+        }
+    }
+
+    /// Removes the partial output and yt-dlp's intermediate per-stream files
+    /// (`<stem>.f<id>.<ext>`, `.part`, `.ytdl`) left behind when the download is cancelled.
+    /// Safe because the `_vidl` suffix plus `uniquePath()` make the stem unique to this run.
+    private func cleanupIncompleteFiles(outputPath: String) {
+        let fm = FileManager.default
+        let dir = (outputPath as NSString).deletingLastPathComponent
+        let stem = ((outputPath as NSString).deletingPathExtension as NSString).lastPathComponent
+        guard !stem.isEmpty, let names = try? fm.contentsOfDirectory(atPath: dir) else { return }
+        for name in names where name == stem || name.hasPrefix(stem + ".") {
+            try? fm.removeItem(atPath: "\(dir)/\(name)")
         }
     }
 
@@ -264,60 +473,64 @@ final class DownloadViewModel {
         }
         // Each new stream starts with a "[download] Destination:" line — a reliable segment boundary.
         if line.hasPrefix("[download] Destination: ") {
-            downloadFileCount += 1
-            currentSegment = min(max(downloadFileCount - 1, 0), expectedSegments - 1)
-            segmentRawPct = 0
-            skipNextPct = true
+            withTransfer { t in
+                t.segments.fileCount += 1
+                t.segments.current = min(max(t.segments.fileCount - 1, 0), t.segments.expected - 1)
+                t.segments.rawPct = 0
+                t.segments.skipNextPct = true
+            }
         }
         if line.hasPrefix("ERROR:") {
             lastErrorLine = String(line.dropFirst("ERROR:".count)).trimmingCharacters(in: .whitespaces)
         }
         if let m = firstGroup(#"at\s+([0-9.]+\s*[KMG]?i?B/s)"#, in: line) {
-            speedText = m.replacingOccurrences(of: " ", with: "")
+            withTransfer { $0.speedText = m.replacingOccurrences(of: " ", with: "") }
         }
         if let m = firstGroup(#"ETA\s+(\d+:\d+(?::\d+)?)"#, in: line) {
-            etaText = m
+            withTransfer { $0.etaText = m }
         }
         if line.hasPrefix("[Merger]") {
-            statusText = tr("Fusion des pistes…", "Merging streams…")
+            if let t = phase.transfer { phase = .finalizing(.merging, t) }
         } else if line.hasPrefix("[ExtractAudio]") {
-            statusText = tr("Extraction audio…", "Extracting audio…")
-        } else if progress <= 0 {
-            // Before the first byte: surface what yt-dlp is doing so the bar doesn't look stuck.
-            // Phases are ranked and only ever move forward — yt-dlp interleaves [info] lines after
-            // the manifest, which would otherwise make the label flicker backwards.
+            if let t = phase.transfer { phase = .finalizing(.extracting, t) }
+        } else if case .preparing(let prep, let t) = phase {
+            // Surface what yt-dlp is doing before the first byte; phases only move forward.
             let lower = line.lowercased()
-            var rank = 0
-            var text = ""
+            var next: PrepPhase?
             if lower.contains("solving") || lower.contains("challenge") {
-                rank = 2; text = tr("Vérification YouTube…", "Verifying with YouTube…")
+                next = .verifying
             } else if lower.contains("m3u8") || lower.contains("manifest") || lower.contains("fragments") {
-                rank = 3; text = tr("Préparation du flux…", "Preparing stream…")
+                next = .preparingStream
             } else if line.hasPrefix("[youtube]") || line.hasPrefix("[info]") {
-                rank = 1; text = tr("Récupération des informations…", "Fetching video info…")
+                next = .fetchingInfo
             }
-            if rank > prepPhaseRank {
-                prepPhaseRank = rank
-                statusText = text
-            }
+            if let next, next > prep { phase = .preparing(next, t) }
         }
 
         // Use yt-dlp's raw "%" (fine-grained, ~10/sec). Skip the spurious first reading of each
         // stream, keep it monotonic within the stream, and map onto the segment slice.
-        if let pct = parsePercent(line) {
-            if skipNextPct {
-                skipNextPct = false
-            } else {
-                if pct > segmentRawPct { segmentRawPct = pct }
-                let global = (Double(currentSegment) * 100 + segmentRawPct) / Double(expectedSegments)
-                if global > progress {
-                    progress = global
-                    statusText = tr("Téléchargement…", "Downloading…")
-                    percentText = String(format: "%5.1f %%", global)
+        if parsePercent(line) != nil {
+            withTransfer { t in
+                guard let pct = self.parsePercent(line) else { return }
+                if t.segments.skipNextPct {
+                    t.segments.skipNextPct = false
+                } else {
+                    if pct > t.segments.rawPct { t.segments.rawPct = pct }
+                    let global = (Double(t.segments.current) * 100 + t.segments.rawPct) / Double(t.segments.expected)
+                    if global > t.progress {
+                        t.progress = global
+                        t.percentText = String(format: "%5.1f %%", global)
+                    }
                 }
             }
+            // First real byte while preparing → we're downloading (drops the indeterminate bar).
+            if case .preparing(_, let t) = phase, t.progress > 0 {
+                phase = .downloading(t)
+            }
         }
-        if let path = captureDestination(line) { downloadedFilePath = path }
+        if let path = captureDestination(line) {
+            withTransfer { $0.filePath = path }
+        }
     }
 
     private func parsePercent(_ line: String) -> Double? {
@@ -350,25 +563,23 @@ final class DownloadViewModel {
         return nil
     }
 
-    private func finishSuccess(history: HistoryStore) {
-        progress = 100
-        var sizeMsg = ""
-        if let path = downloadedFilePath,
+    private func finishSuccess(history: HistoryStore, snapshot: DownloadSnapshot) {
+        let filePath = phase.transfer?.filePath
+        var sizeMB: Double?
+        if let path = filePath,
            let attrs = try? FileManager.default.attributesOfItem(atPath: path),
            let size = attrs[.size] as? Double {
-            sizeMsg = String(format: " (%.1f MB)", size / (1024 * 1024))
+            sizeMB = size / (1024 * 1024)
         }
-        if exportType == .mp4, downloadedFilePath != nil {
-            statusText = tr("Téléchargement terminé\(sizeMsg). Re-encodez pour Final Cut Pro si besoin.",
-                            "Download complete\(sizeMsg). Re-encode for Final Cut Pro if needed.")
-            showReencode = true
-        } else {
-            statusText = tr("Téléchargement terminé\(sizeMsg).", "Download complete\(sizeMsg).")
-        }
-        if let title = meta?.title, !title.isEmpty {
-            let entry = HistoryEntry(title: title, url: url.trimmingCharacters(in: .whitespaces),
-                                     thumbnailURL: meta?.thumbnailURL,
-                                     downloadDate: Self.now())
+        let completion = Completion(snapshot: snapshot, filePath: filePath, sizeMB: sizeMB)
+        lastCompletion = completion
+        phase = .completed(completion)
+
+        if let title = snapshot.title, !title.isEmpty {
+            let entry = HistoryEntry(title: title, url: snapshot.url,
+                                     thumbnailURL: snapshot.thumbnailURL,
+                                     downloadDate: Self.now(),
+                                     filePath: filePath)
             history.add(entry)
         }
         if openFolderAfter { revealFolder() }
@@ -377,28 +588,26 @@ final class DownloadViewModel {
     func cancelDownload() {
         cancelled = true
         activeProcess?.terminate()
-        statusText = tr("Téléchargement arrêté.", "Download stopped.")
+        // The transition to .cancelled is made in download() when runDownload returns.
     }
 
     // MARK: - Re-encode for Final Cut Pro
 
     func reencode() async {
-        guard !encoding else {
+        if case .reencoding = phase {
             cancelReencode = true
             activeProcess?.terminate()
             return
         }
-        guard let input = downloadedFilePath, FileManager.default.fileExists(atPath: input),
+        guard let input = phase.revealableFile, FileManager.default.fileExists(atPath: input),
               let ffmpeg = BinaryLocator.ffmpeg else {
             errorMessage = tr("ffmpeg introuvable ou fichier absent.", "ffmpeg not found or file missing.")
             return
         }
-        encoding = true
         cancelReencode = false
-        progress = 0
         displayProgress = 0
+        phase = .reencoding(0)
         startSmoothing()
-        statusText = tr("Ré-encodage…", "Re-encoding…")
         let output = input.replacingOccurrences(of: ".mp4", with: "_reencoded.mp4")
         let args = FFmpegService.reencodeArguments(input: input, output: output)
         let duration = meta?.duration ?? 0
@@ -408,24 +617,28 @@ final class DownloadViewModel {
         let status = await proc.stream(executable: ffmpeg, arguments: args) { [weak self] line in
             guard let self else { return }
             if duration > 0, let secs = FFmpegService.parseProgressSeconds(line) {
-                let pct = min(100, secs / duration * 100)
-                self.progress = pct
-                self.statusText = String(format: self.tr("Ré-encodage… %.1f %%", "Re-encoding… %.1f%%"), pct)
+                self.phase = .reencoding(min(100, secs / duration * 100))
             }
             if self.cancelReencode { proc.terminate() }
         }
-        encoding = false
         activeProcess = nil
 
         if cancelReencode || status != 0 {
             try? FileManager.default.removeItem(atPath: output)
-            statusText = cancelReencode ? tr("Ré-encodage annulé.", "Re-encoding cancelled.")
-                                        : tr("Erreur lors du ré-encodage.", "Error during re-encoding.")
+            phase = .reencodeFailed(cancelReencode ? tr("Ré-encodage annulé.", "Re-encoding cancelled.")
+                                                   : tr("Erreur lors du ré-encodage.", "Error during re-encoding."))
         } else {
-            try? FileManager.default.removeItem(atPath: input)
-            try? FileManager.default.moveItem(atPath: output, toPath: input)
-            progress = 100
-            statusText = tr("Fichier MP4 ré-encodé et optimisé.", "MP4 re-encoded and optimized.")
+            // Swap the re-encoded file in for the original atomically. `replaceItemAt`
+            // never deletes the original until the new file is in place, so a failure
+            // (e.g. disk full) leaves the original intact instead of losing both files.
+            do {
+                _ = try FileManager.default.replaceItemAt(URL(fileURLWithPath: input),
+                                                          withItemAt: URL(fileURLWithPath: output))
+                phase = .reencoded(input)
+            } catch {
+                phase = .reencodeFailed(tr("Ré-encodage terminé, mais le remplacement du fichier a échoué. Le fichier d'origine est conservé.",
+                                           "Re-encoding done, but replacing the file failed. The original file was kept."))
+            }
         }
     }
 
@@ -460,8 +673,8 @@ final class DownloadViewModel {
         }
     }
 
-    private func revealFolder() {
-        if let path = downloadedFilePath, FileManager.default.fileExists(atPath: path) {
+    func revealFolder() {
+        if let path = phase.revealableFile, FileManager.default.fileExists(atPath: path) {
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
         } else {
             NSWorkspace.shared.open(URL(fileURLWithPath: outputDirPath))

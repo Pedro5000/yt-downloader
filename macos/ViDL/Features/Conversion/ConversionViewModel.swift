@@ -17,6 +17,16 @@ final class ConversionViewModel {
     var statusText = ""
     var estimatedSize = "N/A"
 
+    /// Empty = write next to the source file (the default). Persisted across launches.
+    var outputDirPath: String = UserDefaults.standard.string(forKey: "convOutputDirPath") ?? "" {
+        didSet { UserDefaults.standard.set(outputDirPath, forKey: "convOutputDirPath") }
+    }
+    var openWhenDone: Bool = (UserDefaults.standard.object(forKey: "convOpenWhenDone") as? Bool) ?? true {
+        didSet { UserDefaults.standard.set(openWhenDone, forKey: "convOpenWhenDone") }
+    }
+    /// Path of the last successfully produced file, for the "Show in Finder" affordance.
+    private(set) var producedFile: String?
+
     var errorMessage: String?
 
     var app: AppState?
@@ -62,6 +72,20 @@ final class ConversionViewModel {
         NSWorkspace.shared.open(URL(fileURLWithPath: filePath))
     }
 
+    func chooseOutputFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let dir = panel.url { outputDirPath = dir.path }
+    }
+
+    /// Reveals the produced file in the Finder, if it still exists.
+    func revealOutput() {
+        guard let producedFile, FileManager.default.fileExists(atPath: producedFile) else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: producedFile)])
+    }
+
     func startConversion() async {
         guard let input = filePath, FileManager.default.fileExists(atPath: input) else {
             errorMessage = tr("Veuillez choisir un fichier valide.", "Please choose a valid file.")
@@ -77,18 +101,21 @@ final class ConversionViewModel {
         }
         duration = dur
 
-        let base = (input as NSString).deletingPathExtension
         let fmt = settings.outputFormat
-        var output = "\(base)_converted.\(fmt)"
+        let sourceDir = (input as NSString).deletingLastPathComponent
+        let stem = ((input as NSString).lastPathComponent as NSString).deletingPathExtension
+        let dir = outputDirPath.isEmpty ? sourceDir : outputDirPath
+        var output = "\(dir)/\(stem)_converted.\(fmt)"
         var i = 1
         while FileManager.default.fileExists(atPath: output) {
-            output = "\(base)_converted(\(i)).\(fmt)"
+            output = "\(dir)/\(stem)_converted(\(i)).\(fmt)"
             i += 1
         }
         outputFile = output
 
         progress = 0
         estimatedSize = "N/A"
+        producedFile = nil
         statusText = tr("Conversion en cours…", "Converting…")
         converting = true
         cancelled = false
@@ -117,10 +144,12 @@ final class ConversionViewModel {
         } else if status == 0 {
             progress = 100
             statusText = tr("Conversion terminée.", "Conversion complete.")
+            producedFile = output
             if let attrs = try? FileManager.default.attributesOfItem(atPath: output),
                let size = attrs[.size] as? Double {
                 estimatedSize = String(format: "%.1f MB", size / (1024 * 1024))
             }
+            if openWhenDone { revealOutput() }
         } else {
             statusText = tr("La conversion a échoué.", "Conversion failed.")
         }

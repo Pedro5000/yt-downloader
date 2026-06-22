@@ -15,10 +15,13 @@ struct ContentView: View {
             ZStack {
                 DownloadView(vm: downloadVM).opacity(app.selectedTab == .download ? 1 : 0)
                     .allowsHitTesting(app.selectedTab == .download)
+                    .accessibilityHidden(app.selectedTab != .download)
                 HistoryView().opacity(app.selectedTab == .history ? 1 : 0)
                     .allowsHitTesting(app.selectedTab == .history)
+                    .accessibilityHidden(app.selectedTab != .history)
                 ConversionView(vm: conversionVM).opacity(app.selectedTab == .conversion ? 1 : 0)
                     .allowsHitTesting(app.selectedTab == .conversion)
+                    .accessibilityHidden(app.selectedTab != .conversion)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -39,7 +42,7 @@ private struct Sidebar: View {
                 VStack(alignment: .leading, spacing: 0) {
                     Text("ViDL").font(.rounded(20, .bold)).foregroundStyle(.white)
                     Text(app.tr("Téléchargeur universel", "Universal Downloader"))
-                        .font(.rounded(10, .medium)).foregroundStyle(.white.opacity(0.4))
+                        .font(.rounded(10, .medium)).foregroundStyle(.white.opacity(0.55))
                 }
             }
             .padding(.horizontal, 18)
@@ -47,10 +50,11 @@ private struct Sidebar: View {
             .padding(.bottom, 26)
 
             VStack(spacing: 4) {
-                ForEach(AppTab.allCases) { tab in
+                ForEach(Array(AppTab.allCases.enumerated()), id: \.element) { index, tab in
                     SidebarItem(tab: tab, isSelected: app.selectedTab == tab) {
                         app.selectedTab = tab
                     }
+                    .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
                 }
             }
             .padding(.horizontal, 12)
@@ -164,13 +168,19 @@ private struct AboutView: View {
     @State private var updateResult: (ok: Bool, text: String)?
     @State private var installedVersion: String?
 
+    /// App version from the bundle, so the About panel never drifts from the build.
+    static var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "2.0"
+    }
+
     var body: some View {
         VStack(spacing: 10) {
             Image(systemName: "play.square.stack.fill")
                 .font(.system(size: 48))
                 .foregroundStyle(Theme.accentGradient)
             Text("ViDL").font(.rounded(26, .bold)).foregroundStyle(.white)
-            Text(app.tr("Téléchargeur universel · Version 2.0", "Universal Downloader · Version 2.0"))
+            Text(app.tr("Téléchargeur universel · Version \(Self.appVersion)",
+                        "Universal Downloader · Version \(Self.appVersion)"))
                 .font(.rounded(12, .medium)).foregroundStyle(.white.opacity(0.6))
             Text("© 2026").font(.rounded(11)).foregroundStyle(.white.opacity(0.4))
 
@@ -212,7 +222,7 @@ private struct AboutView: View {
                 } else {
                     Text(installedVersion.map { "yt-dlp · \($0)" } ?? " ")
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.35))
+                        .foregroundStyle(.white.opacity(0.55))
                         .transition(.opacity)
                 }
             }

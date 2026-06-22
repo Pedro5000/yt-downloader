@@ -119,11 +119,27 @@ struct ConversionView: View {
                         .toggleStyle(.switch).font(.rounded(12)).foregroundStyle(.white.opacity(0.7))
                 }
                 HStack(spacing: 12) {
+                    Button {
+                        vm.chooseOutputFolder()
+                    } label: {
+                        HStack(spacing: 6) { Image(systemName: "folder"); Text(app.tr("Dossier", "Folder")) }
+                    }
+                    .buttonStyle(GhostButtonStyle())
+                    Text(vm.outputDirPath.isEmpty ? app.tr("À côté du fichier source", "Next to source file")
+                                                  : (vm.outputDirPath as NSString).abbreviatingWithTildeInPath)
+                        .font(.rounded(11)).foregroundStyle(.white.opacity(0.6))
+                        .lineLimit(1).truncationMode(.middle)
+                    Spacer()
+                    Toggle(app.tr("Ouvrir à la fin", "Open when done"), isOn: $vm.openWhenDone)
+                        .toggleStyle(.switch).font(.rounded(12)).foregroundStyle(.white.opacity(0.7))
+                }
+                HStack(spacing: 12) {
                     if vm.converting {
                         Button { vm.cancelConversion() } label: {
                             HStack(spacing: 6) { Image(systemName: "xmark"); Text(app.tr("Annuler", "Cancel")) }
                         }
                         .buttonStyle(GhostButtonStyle(tint: Theme.danger))
+                        .keyboardShortcut(.cancelAction)
                     }
                     Spacer()
                     Button {
@@ -132,7 +148,9 @@ struct ConversionView: View {
                         HStack(spacing: 7) { Image(systemName: "wand.and.stars"); Text(app.tr("Démarrer la conversion", "Start Conversion")) }
                     }
                     .buttonStyle(AccentButtonStyle(gradient: Theme.successGradient))
-                    .disabled(vm.converting)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(vm.converting || vm.filePath == nil)
+                    .help(vm.filePath == nil ? app.tr("Choisissez un fichier d'abord", "Choose a file first") : "")
                 }
             }
         }
@@ -145,9 +163,17 @@ struct ConversionView: View {
                                 gradient: vm.progress >= 100 ? Theme.successGradient : Theme.accentGradient)
                 HStack {
                     Text(vm.statusText).font(.rounded(12, .medium)).foregroundStyle(.white.opacity(0.7))
+                    if vm.producedFile != nil, !vm.converting {
+                        Button {
+                            vm.revealOutput()
+                        } label: {
+                            HStack(spacing: 6) { Image(systemName: "folder"); Text(app.tr("Afficher dans le Finder", "Show in Finder")) }
+                        }
+                        .buttonStyle(GhostButtonStyle())
+                    }
                     Spacer()
                     Text("\(app.tr("Taille estimée", "Estimated size")) : \(vm.estimatedSize)")
-                        .font(.rounded(11)).foregroundStyle(.white.opacity(0.45))
+                        .font(.rounded(11)).foregroundStyle(.white.opacity(0.6))
                 }
             }
         }
@@ -161,6 +187,7 @@ struct ConversionView: View {
             }
             .labelsHidden()
             .frame(maxWidth: .infinity)
+            .accessibilityLabel(label)
         }
     }
 }
@@ -207,6 +234,7 @@ private struct AdvancedSettingsSheet: View {
                 ForEach(options, id: \.self) { Text($0).tag($0) }
             }
             .labelsHidden().frame(width: 150)
+            .accessibilityLabel(label)
         }
     }
 }

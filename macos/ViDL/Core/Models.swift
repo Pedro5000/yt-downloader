@@ -3,6 +3,7 @@ import Foundation
 struct VideoMeta {
     var title: String?
     var uploader: String?
+    var channelHandle: String?
     var uploadDate: String?
     var viewCount: Int?
     var likeCount: Int?
@@ -49,13 +50,17 @@ struct HistoryEntry: Identifiable, Hashable, Codable {
     var url: String
     var thumbnailURL: String?
     var downloadDate: String
+    /// Absolute path of the downloaded file, when known. Optional so old entries and
+    /// the shared Python history.json (which never wrote it) decode fine.
+    var filePath: String?
 
-    init(title: String, url: String, thumbnailURL: String?, downloadDate: String) {
+    init(title: String, url: String, thumbnailURL: String?, downloadDate: String, filePath: String? = nil) {
         self.id = UUID()
         self.title = title
         self.url = url
         self.thumbnailURL = thumbnailURL
         self.downloadDate = downloadDate
+        self.filePath = filePath
     }
 
     // Compatible with the existing Python history.json (snake_case, no id field).
@@ -63,6 +68,7 @@ struct HistoryEntry: Identifiable, Hashable, Codable {
         case title, url
         case thumbnailURL = "thumbnail_url"
         case downloadDate = "download_date"
+        case filePath = "file_path"
     }
 
     init(from decoder: Decoder) throws {
@@ -72,6 +78,7 @@ struct HistoryEntry: Identifiable, Hashable, Codable {
         self.url = (try? c.decode(String.self, forKey: .url)) ?? ""
         self.thumbnailURL = try? c.decodeIfPresent(String.self, forKey: .thumbnailURL)
         self.downloadDate = (try? c.decode(String.self, forKey: .downloadDate)) ?? ""
+        self.filePath = try? c.decodeIfPresent(String.self, forKey: .filePath)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -80,6 +87,7 @@ struct HistoryEntry: Identifiable, Hashable, Codable {
         try c.encode(url, forKey: .url)
         try c.encodeIfPresent(thumbnailURL, forKey: .thumbnailURL)
         try c.encode(downloadDate, forKey: .downloadDate)
+        try c.encodeIfPresent(filePath, forKey: .filePath)
     }
 }
 

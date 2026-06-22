@@ -27,9 +27,19 @@ final class AppState {
     var selectedTab: AppTab = .download
     var showAbout = false
 
+    /// Set by the History tab to hand a URL to the Download tab, which picks it up,
+    /// pre-fills the field, analyzes it, and clears this back to nil.
+    var pendingURL: String?
+
     init() {
         let saved = UserDefaults.standard.string(forKey: "language")
         self.language = AppLanguage(rawValue: saved ?? "fr") ?? .fr
+    }
+
+    /// Routes a URL to the Download tab for re-use (e.g. from a history entry).
+    func openInDownload(_ url: String) {
+        pendingURL = url
+        selectedTab = .download
     }
 
     /// Picks the correct string for the active language. Mirrors the Python `if fr else en` pattern.
