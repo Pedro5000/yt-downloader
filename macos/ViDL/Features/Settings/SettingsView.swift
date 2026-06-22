@@ -13,15 +13,28 @@ struct SettingsView: View {
 
     var body: some View {
         @Bindable var settings = settings
-        Form {
-            dependenciesSection
-            cookiesSection
-            formatsSection
-            downloadOptionsSection
-            notificationsSection(settings: $settings)
+        TabView {
+            Form {
+                cookiesSection
+                notificationsSection(settings: $settings)
+            }
+            .formStyle(.grouped)
+            .tabItem { Label(app.tr("Général", "General"), systemImage: "gearshape") }
+
+            Form {
+                downloadOptionsSection
+                formatsSection
+            }
+            .formStyle(.grouped)
+            .tabItem { Label(app.tr("Téléchargement", "Download"), systemImage: "arrow.down.circle") }
+
+            Form {
+                dependenciesSection
+            }
+            .formStyle(.grouped)
+            .tabItem { Label(app.tr("Dépendances", "Dependencies"), systemImage: "shippingbox") }
         }
-        .formStyle(.grouped)
-        .frame(width: 500, height: 660)
+        .frame(width: 520, height: 440)
         .navigationTitle(app.tr("Réglages", "Settings"))
         .task { await loadVersion() }
         .task { notifStatus = await Notifier.authorizationStatus() }
