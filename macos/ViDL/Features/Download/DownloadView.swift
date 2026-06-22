@@ -8,6 +8,8 @@ struct DownloadView: View {
     @FocusState private var urlFocused: Bool
     @State private var dropTargeted = false
     @State private var depsRefresh = false
+    @State private var clipboardSuggestion: String?
+    @State private var dismissedClipboard: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -49,7 +51,10 @@ struct DownloadView: View {
             if dropTargeted { DropHint(text: app.tr("Déposez un lien vidéo ici", "Drop a video link here")) }
         }
         .animation(.easeOut(duration: 0.12), value: dropTargeted)
-        .onAppear { vm.app = app; vm.settings = settings }
+        .onAppear { vm.app = app; vm.settings = settings; checkClipboard() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            checkClipboard()
+        }
         .onChange(of: app.pendingURL) { _, newValue in
             guard let newValue, !newValue.isEmpty else { return }
             vm.url = newValue
@@ -106,6 +111,24 @@ struct DownloadView: View {
                     }
                     .buttonStyle(AccentButtonStyle())
                     .disabled(vm.analyzing)
+                }
+                if let sug = clipboardSuggestion, vm.url.isEmpty {
+                    HStack(spacing: 8) {
+                        Image(systemName: "doc.on.clipboard").foregroundStyle(Theme.accent).font(.system(size: 12))
+                        Text(sug).font(.rounded(11)).foregroundStyle(.white.opacity(0.6))
+                            .lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        Button(app.tr("Coller & analyser", "Paste & analyze")) {
+                            vm.url = sug; clipboardSuggestion = nil
+                            Task { await vm.analyze() }
+                        }
+                        .buttonStyle(GhostButtonStyle(tint: Theme.accent))
+                        Button {
+                            dismissedClipboard = sug; clipboardSuggestion = nil
+                        } label: { Image(systemName: "xmark") }
+                            .buttonStyle(IconButtonStyle())
+                            .accessibilityLabel(app.tr("Ignorer", "Dismiss"))
+                    }
                 }
                 if !vm.analysisInfo.isEmpty {
                     Text(vm.analysisInfo).font(.rounded(11, .medium)).foregroundStyle(.white.opacity(0.5))
@@ -350,6 +373,16 @@ struct DownloadView: View {
             .padding(.vertical, 14)
         }
         .background(.ultraThinMaterial)
+    }
+
+    /// If a fresh video URL sits in the clipboard and the field is empty, offer to use it.
+    private func checkClipboard() {
+        guard vm.url.isEmpty else { clipboardSuggestion = nil; return }
+        guard let s = NSPasteboard.general.string(forType: .string)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              s.hasPrefix("http://") || s.hasPrefix("https://"),
+              s.count < 2000, s != dismissedClipboard else { return }
+        clipboardSuggestion = s
     }
 
     /// The video title with an inline green seal appended once it's been downloaded,
