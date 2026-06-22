@@ -123,4 +123,19 @@ enum Formatting {
         let invalid = CharacterSet(charactersIn: "\\/*?:\"<>|")
         return String(name.unicodeScalars.filter { !invalid.contains($0) })
     }
+
+    /// Truncates to at most `maxBytes` UTF-8 bytes without splitting a character —
+    /// keeps filenames under the APFS 255-byte limit even with long titles.
+    static func clampBytes(_ s: String, _ maxBytes: Int) -> String {
+        guard s.utf8.count > maxBytes else { return s }
+        var out = ""
+        var count = 0
+        for ch in s {
+            let n = String(ch).utf8.count
+            if count + n > maxBytes { break }
+            out.append(ch)
+            count += n
+        }
+        return out
+    }
 }

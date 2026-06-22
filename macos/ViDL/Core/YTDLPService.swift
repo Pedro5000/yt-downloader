@@ -59,6 +59,18 @@ enum YTDLPService {
         return lower.contains("sign in to confirm") || lower.contains("age-restricted")
     }
 
+    /// Returns a clean "@handle" (letters/digits/._-, ≤30 chars) or nil. `requireAt`
+    /// rejects values without a leading "@" (opaque/numeric uploader IDs from non-YouTube
+    /// sites), so the filename suffix stays meaningful or is omitted entirely.
+    private static func cleanHandle(_ raw: String?, requireAt: Bool) -> String? {
+        guard let r = raw?.trimmingCharacters(in: .whitespaces), !r.isEmpty else { return nil }
+        if requireAt && !r.hasPrefix("@") { return nil }
+        let body = r.hasPrefix("@") ? String(r.dropFirst()) : r
+        let allowed = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+        guard (1...30).contains(body.count), body.allSatisfy({ allowed.contains($0) }) else { return nil }
+        return "@" + body
+    }
+
     /// Maps yt-dlp's combined output to a friendly, classified reason.
     static func classify(_ combined: String) -> AnalyzeError {
         let l = combined.lowercased()
@@ -105,13 +117,11 @@ enum YTDLPService {
         var meta = VideoMeta()
         meta.title = info.title
         meta.uploader = info.uploader
-        // `channel_handle` is the modern field (e.g. "@MrBeast"); older extractors
-        // surface the same handle via `uploader_id` when it starts with "@".
-        if let h = info.channel_handle, !h.isEmpty {
-            meta.channelHandle = h
-        } else if let h = info.uploader_id, h.hasPrefix("@") {
-            meta.channelHandle = h
-        }
+        // `channel_handle` is the modern handle (e.g. "@MrBeast"); some extractors surface
+        // an "@handle" via `uploader_id`. Anything else (opaque IDs like Dailymotion's
+        // "x2klxbt", numeric Twitter IDs) is rejected → no handle suffix in the filename.
+        meta.channelHandle = cleanHandle(info.channel_handle, requireAt: false)
+            ?? cleanHandle(info.uploader_id, requireAt: true)
         if let raw = info.upload_date, raw.count == 8 {
             let y = raw.prefix(4), m = raw.dropFirst(4).prefix(2), d = raw.dropFirst(6).prefix(2)
             meta.uploadDate = "\(y)-\(m)-\(d)"

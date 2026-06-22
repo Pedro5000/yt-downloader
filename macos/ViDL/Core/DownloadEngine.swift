@@ -58,7 +58,8 @@ final class DownloadEngine {
         }
 
         let raw = Formatting.sanitizeFilename(spec.title ?? "video")
-        let stem = raw.isEmpty ? "video" : raw
+        // Bound the title so "<title>_vidl_@handle.ext (n)" stays under the APFS 255-byte limit.
+        let stem = Formatting.clampBytes(raw.isEmpty ? "video" : raw, 150)
         let handle = Formatting.sanitizeFilename(spec.channelHandle ?? "")
         let base = handle.isEmpty ? stem + "_vidl" : stem + "_vidl_" + handle
         let ext = spec.exportType == .mp4 ? spec.mergeContainer : spec.audioFormat.ext
