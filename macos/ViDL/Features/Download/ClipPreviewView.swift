@@ -113,8 +113,10 @@ struct ClipPreviewView: View {
 
     private func seek(_ t: Double) {
         current = t
-        player.seek(to: CMTime(seconds: t, preferredTimescale: 600),
-                    toleranceBefore: .zero, toleranceAfter: .zero)
+        // Tolerant seek = smooth scrubbing on the proxy stream. The exact clip bounds
+        // come from `start`/`end` (passed to --download-sections), not this preview.
+        let tol = CMTime(seconds: 0.3, preferredTimescale: 600)
+        player.seek(to: CMTime(seconds: t, preferredTimescale: 600), toleranceBefore: tol, toleranceAfter: tol)
     }
 
     private func cleanup() {
@@ -137,7 +139,9 @@ private struct PlayerSurface: NSViewRepresentable {
     func updateNSView(_ v: AVPlayerView, context: Context) { v.player = player }
 }
 
-/// Timeline with a playhead and two draggable in/out handles; the selection is highlighted.
+/// Compressor-style trim bar: in/out handles point OUTWARD (so they never overlap, even on
+/// a tiny selection of a long video); the playhead stays within the selection and follows
+/// whichever handle is being dragged so you preview the in/out frame.
 private struct TrimTimeline: View {
     let duration: Double
     @Binding var current: Double
@@ -145,44 +149,58 @@ private struct TrimTimeline: View {
     @Binding var end: Double
     var onSeek: (Double) -> Void
 
+    private let hw: CGFloat = 12   // handle width / track inset
+
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width
+            let playhead = min(end, max(start, current))
             ZStack(alignment: .leading) {
-                // Seek surface (behind everything).
+                // Seek surface (behind) — scrubbing is clamped to the selection.
                 Color.white.opacity(0.001)
                     .contentShape(Rectangle())
-                    .gesture(DragGesture(minimumDistance: 0).onChanged { onSeek(time($0.location.x, w)) })
+                    .gesture(DragGesture(minimumDistance: 0).onChanged {
+                        onSeek(min(end, max(start, time($0.location.x, w))))
+                    })
 
                 Capsule().fill(Color.white.opacity(0.12)).frame(height: 6).allowsHitTesting(false)
                 Rectangle().fill(Theme.accent.opacity(0.45))
-                    .frame(width: max(0, x(end, w) - x(start, w)), height: 6)
+                    .frame(width: max(1, x(end, w) - x(start, w)), height: 6)
                     .offset(x: x(start, w)).allowsHitTesting(false)
                 Rectangle().fill(.white).frame(width: 2, height: 22)
-                    .offset(x: x(current, w) - 1).allowsHitTesting(false)
+                    .offset(x: x(playhead, w) - 1).allowsHitTesting(false)
 
-                handle.offset(x: x(start, w) - 7)
+                // In-handle: right edge at `start`, grows leftward.
+                handle.offset(x: x(start, w) - hw)
                     .gesture(DragGesture(minimumDistance: 0).onChanged {
-                        start = min(end - 0.5, time($0.location.x, w))
+                        let nt = min(end - 0.5, max(0, time($0.location.x, w)))
+                        start = nt; onSeek(nt)
                     })
-                handle.offset(x: x(end, w) - 7)
+                // Out-handle: left edge at `end`, grows rightward.
+                handle.offset(x: x(end, w))
                     .gesture(DragGesture(minimumDistance: 0).onChanged {
-                        end = max(start + 0.5, time($0.location.x, w))
+                        let nt = max(start + 0.5, min(duration, time($0.location.x, w)))
+                        end = nt; onSeek(nt)
                     })
             }
         }
     }
 
-    private func x(_ t: Double, _ w: CGFloat) -> CGFloat { duration > 0 ? CGFloat(t / duration) * w : 0 }
+    // Track is inset by `hw` on each side so the outward handles always fit.
+    private func x(_ t: Double, _ w: CGFloat) -> CGFloat {
+        guard duration > 0 else { return hw }
+        return hw + CGFloat(t / duration) * (w - 2 * hw)
+    }
     private func time(_ px: CGFloat, _ w: CGFloat) -> Double {
-        duration > 0 ? max(0, min(duration, Double(px / w) * duration)) : 0
+        guard duration > 0, w > 2 * hw else { return 0 }
+        return max(0, min(duration, Double((px - hw) / (w - 2 * hw)) * duration))
     }
 
     private var handle: some View {
         RoundedRectangle(cornerRadius: 3, style: .continuous)
             .fill(Theme.accent)
-            .frame(width: 14, height: 26)
-            .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).stroke(.white.opacity(0.6), lineWidth: 1))
+            .frame(width: hw, height: 26)
+            .overlay(Rectangle().fill(.white.opacity(0.75)).frame(width: 2, height: 12))
             .shadow(color: .black.opacity(0.3), radius: 2, y: 1)
     }
 }
