@@ -1,4 +1,5 @@
 import SwiftUI
+import UserNotifications
 
 struct SettingsView: View {
     @Environment(AppSettings.self) private var settings
@@ -8,6 +9,7 @@ struct SettingsView: View {
     @State private var updating = false
     @State private var updateResult: (ok: Bool, text: String)?
     @State private var installer = Installer()
+    @State private var notifStatus: UNAuthorizationStatus = .notDetermined
 
     var body: some View {
         @Bindable var settings = settings
@@ -22,6 +24,7 @@ struct SettingsView: View {
         .frame(width: 500, height: 660)
         .navigationTitle(app.tr("Réglages", "Settings"))
         .task { await loadVersion() }
+        .task { notifStatus = await Notifier.authorizationStatus() }
     }
 
     // MARK: - Dependencies (status + update / install)
@@ -155,11 +158,28 @@ struct SettingsView: View {
         Section {
             Toggle(app.tr("Notifier à la fin d'une tâche", "Notify when a task finishes"),
                    isOn: settings.notificationsEnabled)
+            if notifStatus == .denied {
+                HStack {
+                    Label(app.tr("Refusées par macOS", "Denied by macOS"), systemImage: "bell.slash.fill")
+                        .foregroundStyle(Theme.danger).font(.callout)
+                    Spacer()
+                    Button(app.tr("Réglages système", "System Settings")) { openSystemNotificationSettings() }
+                }
+            } else if notifStatus == .authorized {
+                Label(app.tr("Autorisées par macOS", "Allowed by macOS"), systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(Theme.success).font(.callout)
+            }
         } header: {
             Text(app.tr("Notifications", "Notifications"))
         } footer: {
             Text(app.tr("Notification système quand un téléchargement ou une conversion se termine alors que l'app est en arrière-plan.",
                         "System notification when a download or conversion finishes while the app is in the background."))
+        }
+    }
+
+    private func openSystemNotificationSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") {
+            NSWorkspace.shared.open(url)
         }
     }
 

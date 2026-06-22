@@ -9,6 +9,12 @@ enum Notifier {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
+    static func authorizationStatus() async -> UNAuthorizationStatus {
+        await withCheckedContinuation { cont in
+            UNUserNotificationCenter.current().getNotificationSettings { cont.resume(returning: $0.authorizationStatus) }
+        }
+    }
+
     static func notifyIfBackgrounded(title: String, body: String) {
         guard !NSApp.isActive else { return }
         let content = UNMutableNotificationContent()
