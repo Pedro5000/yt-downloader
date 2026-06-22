@@ -118,19 +118,13 @@ struct ConversionView: View {
             VStack(alignment: .leading, spacing: 14) {
                 SectionHeader(symbol: "slider.horizontal.3", title: app.tr("Options d'export", "Export Options"))
                 if vm.isAudioOutput {
-                    HStack(spacing: 24) {
-                        labeledPicker(app.tr("Format", "Format"), selection: $vm.settings.outputFormat, options: ConversionViewModel.outputFormats)
-                        labeledPicker(app.tr("Échantillonnage", "Sample rate"), selection: $vm.settings.sampleRate, options: ConversionViewModel.sampleRates)
-                    }
+                    optionRow(app.tr("Format", "Format"), $vm.settings.outputFormat, ConversionViewModel.outputFormats,
+                              app.tr("Échantillonnage", "Sample rate"), $vm.settings.sampleRate, ConversionViewModel.sampleRates)
                 } else {
-                    HStack(spacing: 24) {
-                        labeledPicker(app.tr("Format", "Format"), selection: $vm.settings.outputFormat, options: ConversionViewModel.outputFormats)
-                        labeledPicker(app.tr("Qualité", "Quality"), selection: $vm.settings.quality, options: ConversionViewModel.qualities)
-                    }
-                    HStack(spacing: 24) {
-                        labeledPicker(app.tr("Résolution", "Resolution"), selection: $vm.settings.resolution, options: ConversionViewModel.resolutions)
-                        labeledPicker(app.tr("Échantillonnage", "Sample rate"), selection: $vm.settings.sampleRate, options: ConversionViewModel.sampleRates)
-                    }
+                    optionRow(app.tr("Format", "Format"), $vm.settings.outputFormat, ConversionViewModel.outputFormats,
+                              app.tr("Qualité", "Quality"), $vm.settings.quality, ConversionViewModel.qualities)
+                    optionRow(app.tr("Résolution", "Resolution"), $vm.settings.resolution, ConversionViewModel.resolutions,
+                              app.tr("Échantillonnage", "Sample rate"), $vm.settings.sampleRate, ConversionViewModel.sampleRates)
                 }
                 HStack {
                     Button {
@@ -206,15 +200,19 @@ struct ConversionView: View {
         }
     }
 
-    private func labeledPicker(_ label: String, selection: Binding<String>, options: [String]) -> some View {
-        HStack(spacing: 10) {
-            Text(label).font(.rounded(12, .medium)).foregroundStyle(.white.opacity(0.6))
-            Picker("", selection: selection) {
-                ForEach(options, id: \.self) { Text($0).tag($0) }
-            }
-            .labelsHidden()
-            .frame(maxWidth: .infinity)
-            .accessibilityLabel(label)
+    /// Two label+dropdown pairs on one line: the left pair is anchored left, the right pair
+    /// is pushed flush right (fixed-width fields) so Qualité / Échantillonnage line up with
+    /// each other and with the toggles' right edge below.
+    private func optionRow(_ leftLabel: String, _ leftSel: Binding<String>, _ leftOpts: [String],
+                           _ rightLabel: String, _ rightSel: Binding<String>, _ rightOpts: [String]) -> some View {
+        HStack(spacing: 0) {
+            Text(leftLabel).font(.rounded(12, .medium)).foregroundStyle(.white.opacity(0.6))
+                .frame(width: 96, alignment: .leading)
+            FieldMenu(selection: leftSel, options: leftOpts).frame(width: 150)
+            Spacer(minLength: 24)
+            Text(rightLabel).font(.rounded(12, .medium)).foregroundStyle(.white.opacity(0.6))
+                .frame(width: 132, alignment: .leading)
+            FieldMenu(selection: rightSel, options: rightOpts).frame(width: 150)
         }
     }
 }
