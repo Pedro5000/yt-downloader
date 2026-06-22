@@ -436,7 +436,9 @@ final class DownloadViewModel {
                             mergeContainer: chosenContainer, audioLanguage: audioLanguage, mp3Bitrate: mp3Bitrate,
                             outputDirPath: outputDirPath, clipSection: clipSection, forceKeyframes: clipPreciseCut,
                             infoJSONPath: (cachedInfoURL == trimmed ? cachedInfoPath : nil),
-                            cookiesBrowser: settings?.cookiesBrowser.ytDlpValue)
+                            cookiesBrowser: settings?.cookiesBrowser.ytDlpValue,
+                            embedMetadata: settings?.embedMetadata ?? false,
+                            sponsorBlock: settings?.sponsorBlock ?? false)
     }
 
     func download(history: HistoryStore) async {

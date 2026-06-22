@@ -15,10 +15,11 @@ struct SettingsView: View {
             dependenciesSection
             cookiesSection
             formatsSection
+            downloadOptionsSection
             notificationsSection(settings: $settings)
         }
         .formStyle(.grouped)
-        .frame(width: 500, height: 560)
+        .frame(width: 500, height: 660)
         .navigationTitle(app.tr("Réglages", "Settings"))
         .task { await loadVersion() }
     }
@@ -127,6 +128,24 @@ struct SettingsView: View {
         } footer: {
             Text(app.tr("Affiche les résolutions 1440p/4K disponibles uniquement en VP9/AV1. Ces fichiers sont exportés en MKV (non lus par QuickTime/Final Cut sans conversion).",
                         "Shows 1440p/4K resolutions only available as VP9/AV1. These are exported as MKV (not playable by QuickTime/Final Cut without conversion)."))
+        }
+    }
+
+    // MARK: - Download options
+
+    private var downloadOptionsSection: some View {
+        @Bindable var settings = settings
+        return Section {
+            Toggle(app.tr("Intégrer métadonnées, miniature et chapitres",
+                          "Embed metadata, thumbnail and chapters"),
+                   isOn: $settings.embedMetadata)
+            Toggle(app.tr("Retirer les segments SponsorBlock", "Remove SponsorBlock segments"),
+                   isOn: $settings.sponsorBlock)
+        } header: {
+            Text(app.tr("Téléchargement", "Download"))
+        } footer: {
+            Text(app.tr("Métadonnées, miniature et chapitres intégrés au fichier. SponsorBlock retire sponsors, auto-promo et rappels d'interaction (nécessite ffmpeg).",
+                        "Metadata, thumbnail and chapters embedded in the file. SponsorBlock removes sponsors, self-promo and interaction reminders (needs ffmpeg)."))
         }
     }
 

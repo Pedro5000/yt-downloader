@@ -37,6 +37,14 @@ final class AppSettings {
     var notificationsEnabled: Bool {
         didSet { UserDefaults.standard.set(notificationsEnabled, forKey: "notificationsEnabled") }
     }
+    /// Embed metadata, thumbnail and chapters into the downloaded file.
+    var embedMetadata: Bool {
+        didSet { UserDefaults.standard.set(embedMetadata, forKey: "embedMetadata") }
+    }
+    /// Remove SponsorBlock segments (sponsors, self-promo, interaction reminders).
+    var sponsorBlock: Bool {
+        didSet { UserDefaults.standard.set(sponsorBlock, forKey: "sponsorBlock") }
+    }
 
     init() {
         let saved = UserDefaults.standard.string(forKey: "cookiesBrowser")
@@ -44,5 +52,7 @@ final class AppSettings {
         self.cookiesBrowser = CookiesBrowser(rawValue: saved ?? "firefox") ?? .firefox
         self.includeAllFormats = UserDefaults.standard.bool(forKey: "includeAllFormats")
         self.notificationsEnabled = (UserDefaults.standard.object(forKey: "notificationsEnabled") as? Bool) ?? true
+        self.embedMetadata = UserDefaults.standard.bool(forKey: "embedMetadata")
+        self.sponsorBlock = UserDefaults.standard.bool(forKey: "sponsorBlock")
     }
 }

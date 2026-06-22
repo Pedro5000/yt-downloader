@@ -230,7 +230,9 @@ enum YTDLPService {
                                   cookiesBrowser: String?,
                                   infoJSONPath: String? = nil,
                                   downloadSection: String? = nil,
-                                  forceKeyframes: Bool = false) -> [String] {
+                                  forceKeyframes: Bool = false,
+                                  embedMetadata: Bool = false,
+                                  sponsorBlock: Bool = false) -> [String] {
         let isAuto = audioLanguage.lowercased() == "auto"
         var args: [String] = []
 
@@ -257,6 +259,8 @@ enum YTDLPService {
             args += ["--download-sections", downloadSection]
             if forceKeyframes { args += ["--force-keyframes-at-cuts"] }
         }
+        if embedMetadata { args += ["--embed-metadata", "--embed-thumbnail", "--embed-chapters"] }
+        if sponsorBlock { args += ["--sponsorblock-remove", "default"] }
         args += ["--no-playlist", "--newline", "-o", outputPath]
         if let cookiesBrowser { args += ["--cookies-from-browser", cookiesBrowser] }
         if let infoJSONPath {

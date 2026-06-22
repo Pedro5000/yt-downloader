@@ -19,6 +19,8 @@ struct DownloadSpec: Equatable {
     let forceKeyframes: Bool
     let infoJSONPath: String?     // fast-path: reuse analysis JSON for this URL
     let cookiesBrowser: String?   // yt-dlp value, or nil to disable the cookie retry
+    var embedMetadata: Bool = false
+    var sponsorBlock: Bool = false
 }
 
 struct DownloadOutcome {
@@ -79,7 +81,8 @@ final class DownloadEngine {
                                            mp3Bitrate: spec.mp3Bitrate, mergeContainer: spec.mergeContainer,
                                            outputPath: outputPath,
                                            cookiesBrowser: cookiesBrowser, infoJSONPath: infoJSONPath,
-                                           downloadSection: spec.clipSection, forceKeyframes: spec.forceKeyframes)
+                                           downloadSection: spec.clipSection, forceKeyframes: spec.forceKeyframes,
+                                           embedMetadata: spec.embedMetadata, sponsorBlock: spec.sponsorBlock)
         }
 
         beginPreparing(.starting)
