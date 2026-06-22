@@ -196,6 +196,7 @@ final class DownloadViewModel {
     private var lastErrorLine: String?
 
     var app: AppState?
+    var settings: AppSettings?
     private func tr(_ fr: String, _ en: String) -> String { app?.tr(fr, en) ?? fr }
 
     static let audioLanguages = ["Auto", "en", "pl", "fr", "de", "es", "it", "pt", "ja", "ko", "zh-Hans", "zh-Hant"]
@@ -336,8 +337,8 @@ final class DownloadViewModel {
 
         var (result, ageRestricted, infoJSON) = await YTDLPService.analyze(url: trimmed)
         var usedCookies = false
-        if result == nil && ageRestricted {
-            (result, _, infoJSON) = await YTDLPService.analyze(url: trimmed, useCookies: true)
+        if result == nil && ageRestricted, let browser = settings?.cookiesBrowser.ytDlpValue {
+            (result, _, infoJSON) = await YTDLPService.analyze(url: trimmed, cookiesBrowser: browser)
             usedCookies = true
         }
 
@@ -423,11 +424,11 @@ final class DownloadViewModel {
             t.segments.expected = expected
             phase = .preparing(prep, t)
         }
-        func buildArgs(useCookies: Bool, infoJSONPath: String?) -> [String] {
+        func buildArgs(cookiesBrowser: String?, infoJSONPath: String?) -> [String] {
             YTDLPService.downloadArguments(url: trimmed, formatID: formatID,
                                            exportType: exportType, audioLanguage: audioLanguage,
                                            mp3Bitrate: mp3Bitrate, outputPath: outputPath,
-                                           useCookies: useCookies, infoJSONPath: infoJSONPath)
+                                           cookiesBrowser: cookiesBrowser, infoJSONPath: infoJSONPath)
         }
 
         beginPreparing(.starting)
@@ -439,7 +440,7 @@ final class DownloadViewModel {
         // becomes near-instant). Any failure falls through to a fresh extraction.
         if cachedInfoURL == trimmed, let infoPath = cachedInfoPath,
            FileManager.default.fileExists(atPath: infoPath) {
-            status = await runDownload(executable: ytDlp, args: buildArgs(useCookies: false, infoJSONPath: infoPath))
+            status = await runDownload(executable: ytDlp, args: buildArgs(cookiesBrowser: nil, infoJSONPath: infoPath))
             if status != 0 && !cancelled {
                 ageDetected = false        // cached info likely stale → restart clean
                 beginPreparing(.starting)
@@ -448,14 +449,14 @@ final class DownloadViewModel {
 
         // Normal extraction (also the fallback when the cached info failed).
         if status != 0 && !cancelled {
-            status = await runDownload(executable: ytDlp, args: buildArgs(useCookies: false, infoJSONPath: nil))
+            status = await runDownload(executable: ytDlp, args: buildArgs(cookiesBrowser: nil, infoJSONPath: nil))
         }
 
-        // Age-restricted retry with Firefox cookies.
-        if status != 0 && ageDetected && !cancelled {
+        // Age-restricted retry using the configured browser's cookies.
+        if status != 0 && ageDetected && !cancelled, let browser = settings?.cookiesBrowser.ytDlpValue {
             ageDetected = false
             beginPreparing(.cookies)
-            status = await runDownload(executable: ytDlp, args: buildArgs(useCookies: true, infoJSONPath: nil))
+            status = await runDownload(executable: ytDlp, args: buildArgs(cookiesBrowser: browser, infoJSONPath: nil))
         }
 
         activeProcess = nil

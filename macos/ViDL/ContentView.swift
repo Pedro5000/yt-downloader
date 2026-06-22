@@ -63,7 +63,7 @@ private struct Sidebar: View {
 
             HStack(spacing: 10) {
                 LanguageToggle()
-                AboutButton()
+                SettingsButton()
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 18)
@@ -102,13 +102,14 @@ private struct SidebarItem: View {
     }
 }
 
-private struct AboutButton: View {
+private struct SettingsButton: View {
     @Environment(AppState.self) private var app
+    @Environment(\.openSettings) private var openSettings
     @State private var hovering = false
 
     var body: some View {
         Button {
-            app.showAbout = true
+            openSettings()
         } label: {
             Image(systemName: "gearshape.fill")
                 .font(.system(size: 14, weight: .medium))
@@ -125,7 +126,7 @@ private struct AboutButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(app.tr("À propos & mise à jour", "About & update"))
+        .help(app.tr("Réglages", "Settings"))
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)
     }

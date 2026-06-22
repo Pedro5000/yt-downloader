@@ -4,12 +4,14 @@ import SwiftUI
 struct ViDLApp: App {
     @State private var appState = AppState()
     @State private var history = HistoryStore()
+    @State private var settings = AppSettings()
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environment(appState)
                 .environment(history)
+                .environment(settings)
                 .frame(minWidth: 880, minHeight: 720)
                 .preferredColorScheme(.dark)
         }
@@ -21,6 +23,13 @@ struct ViDLApp: App {
                     appState.showAbout = true
                 }
             }
+        }
+
+        Settings {
+            SettingsView()
+                .environment(appState)
+                .environment(settings)
+                .preferredColorScheme(.dark)
         }
     }
 }

@@ -43,10 +43,10 @@ enum YTDLPService {
     }
 
     /// Runs a single `yt-dlp -j` call and builds the format lists from the JSON `formats` array.
-    static func analyze(url: String, useCookies: Bool = false) async -> (result: AnalysisResult?, ageRestricted: Bool, infoJSON: String?) {
+    static func analyze(url: String, cookiesBrowser: String? = nil) async -> (result: AnalysisResult?, ageRestricted: Bool, infoJSON: String?) {
         guard let ytDlp = BinaryLocator.ytDlp else { return (nil, false, nil) }
         var args = ["-j", "--no-warnings", "--no-playlist"]
-        if useCookies { args += ["--cookies-from-browser", "firefox"] }
+        if let cookiesBrowser { args += ["--cookies-from-browser", cookiesBrowser] }
         args.append(url)
 
         let res = await Shell.capture(ytDlp, args)
@@ -182,7 +182,7 @@ enum YTDLPService {
                                   audioLanguage: String,
                                   mp3Bitrate: String,
                                   outputPath: String,
-                                  useCookies: Bool,
+                                  cookiesBrowser: String?,
                                   infoJSONPath: String? = nil) -> [String] {
         let isAuto = audioLanguage.lowercased() == "auto"
         var args: [String] = []
@@ -207,7 +207,7 @@ enum YTDLPService {
         }
 
         args += ["--no-playlist", "--newline", "-o", outputPath]
-        if useCookies { args += ["--cookies-from-browser", "firefox"] }
+        if let cookiesBrowser { args += ["--cookies-from-browser", cookiesBrowser] }
         if let infoJSONPath {
             // Reuse the info extracted during analysis — skips the webpage/player/challenge
             // round-trip, so the download starts almost immediately.

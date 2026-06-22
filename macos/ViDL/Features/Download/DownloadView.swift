@@ -3,6 +3,7 @@ import SwiftUI
 struct DownloadView: View {
     @Environment(AppState.self) private var app
     @Environment(HistoryStore.self) private var history
+    @Environment(AppSettings.self) private var settings
     @Bindable var vm: DownloadViewModel
 
     var body: some View {
@@ -39,7 +40,7 @@ struct DownloadView: View {
             Task { await vm.analyze() }
             return true
         }
-        .onAppear { vm.app = app }
+        .onAppear { vm.app = app; vm.settings = settings }
         .onChange(of: app.pendingURL) { _, newValue in
             guard let newValue, !newValue.isEmpty else { return }
             vm.url = newValue
