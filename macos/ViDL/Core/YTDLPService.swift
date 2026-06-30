@@ -35,9 +35,14 @@ enum YTDLPService {
         let fps: Double?
         let tbr: Double?
         let abr: Double?
+        let filesize: Double?          // exact byte size (server Content-Length), when known
+        let filesize_approx: Double?   // yt-dlp's estimate, fallback when no exact size
         let language: String?
         let language_preference: Int?
         let format_note: String?
+
+        /// Best available byte size: exact Content-Length first, else yt-dlp's approximation.
+        var knownBytes: Double? { filesize ?? filesize_approx }
     }
 
     private struct RawInfo: Decodable {
@@ -156,15 +161,15 @@ enum YTDLPService {
         // ABR ends up grabbing a random language. Prefer formats marked as original
         // (yt-dlp's `language_preference >= 0`, or "original" in the note) and fall back
         // to plain highest-ABR only if nothing original was found.
-        var bestAudioMP4Original: (id: String, abr: Int)? = nil
-        var bestAudioMP4Any: (id: String, abr: Int)? = nil
-        var bestAudioAnyOriginal: (id: String, abr: Int)? = nil
-        var bestAudioAnyAny: (id: String, abr: Int)? = nil
+        var bestAudioMP4Original: (id: String, abr: Int, bytes: Double?)? = nil
+        var bestAudioMP4Any: (id: String, abr: Int, bytes: Double?)? = nil
+        var bestAudioAnyOriginal: (id: String, abr: Int, bytes: Double?)? = nil
+        var bestAudioAnyAny: (id: String, abr: Int, bytes: Double?)? = nil
 
-        // (w, h, fps) -> best (id, tbr, isMP4). Prefer MP4 over an equal-resolution WebM.
-        var muxed: [Key: (id: String, tbr: Int, mp4: Bool)] = [:]
-        var videoOnly: [Key: (id: String, tbr: Int, mp4: Bool)] = [:]
-        func better(_ newTBR: Int, _ newMP4: Bool, than cur: (id: String, tbr: Int, mp4: Bool)?) -> Bool {
+        // (w, h, fps) -> best (id, tbr, isMP4, bytes). Prefer MP4 over an equal-resolution WebM.
+        var muxed: [Key: (id: String, tbr: Int, mp4: Bool, bytes: Double?)] = [:]
+        var videoOnly: [Key: (id: String, tbr: Int, mp4: Bool, bytes: Double?)] = [:]
+        func better(_ newTBR: Int, _ newMP4: Bool, than cur: (id: String, tbr: Int, mp4: Bool, bytes: Double?)?) -> Bool {
             guard let cur else { return true }
             if newMP4 != cur.mp4 { return newMP4 }   // MP4 wins at equal resolution
             return newTBR > cur.tbr
@@ -177,6 +182,7 @@ enum YTDLPService {
             let hasVideo = (f.vcodec ?? "none") != "none"
             let hasAudio = (f.acodec ?? "none") != "none"
             let tbr = Int((f.tbr ?? 0).rounded())
+            let bytes = f.knownBytes
 
             if !hasVideo && hasAudio {
                 let abr = Int((f.abr ?? f.tbr ?? 0).rounded())
@@ -190,17 +196,17 @@ enum YTDLPService {
                 let isMP4 = (ext == "m4a" || ext == "mp4")
                 if isMP4 {
                     if bestAudioMP4Any == nil || abr > bestAudioMP4Any!.abr {
-                        bestAudioMP4Any = (f.format_id, abr)
+                        bestAudioMP4Any = (f.format_id, abr, bytes)
                     }
                     if isOriginal, bestAudioMP4Original == nil || abr > bestAudioMP4Original!.abr {
-                        bestAudioMP4Original = (f.format_id, abr)
+                        bestAudioMP4Original = (f.format_id, abr, bytes)
                     }
                 }
                 if bestAudioAnyAny == nil || abr > bestAudioAnyAny!.abr {
-                    bestAudioAnyAny = (f.format_id, abr)
+                    bestAudioAnyAny = (f.format_id, abr, bytes)
                 }
                 if isOriginal, bestAudioAnyOriginal == nil || abr > bestAudioAnyOriginal!.abr {
-                    bestAudioAnyOriginal = (f.format_id, abr)
+                    bestAudioAnyOriginal = (f.format_id, abr, bytes)
                 }
             } else if hasVideo {
                 let isMP4 = (ext == "mp4")
@@ -209,9 +215,9 @@ enum YTDLPService {
                 let fps = Int((f.fps ?? 30).rounded())
                 let key = Key(w: w, h: h, fps: fps)
                 if hasAudio {
-                    if better(tbr, isMP4, than: muxed[key]) { muxed[key] = (f.format_id, tbr, isMP4) }
+                    if better(tbr, isMP4, than: muxed[key]) { muxed[key] = (f.format_id, tbr, isMP4, bytes) }
                 } else {
-                    if better(tbr, isMP4, than: videoOnly[key]) { videoOnly[key] = (f.format_id, tbr, isMP4) }
+                    if better(tbr, isMP4, than: videoOnly[key]) { videoOnly[key] = (f.format_id, tbr, isMP4, bytes) }
                 }
             }
         }
@@ -231,17 +237,22 @@ enum YTDLPService {
             var chosenID: String? = mux?.id
             var chosenTBR = mux?.tbr ?? 0
             var chosenMP4 = mux?.mp4 ?? true
+            var chosenBytes = mux?.bytes
             if let vid, let audio = bestAudio {
                 let comboTBR = vid.tbr + audio.abr
                 if comboTBR > chosenTBR {
                     chosenID = "\(vid.id)+\(audio.id)"
                     chosenTBR = comboTBR
                     chosenMP4 = vid.mp4
+                    // Sum component sizes only when both are known; otherwise leave nil so
+                    // the UI falls back to the bitrate estimate rather than show a half-total.
+                    chosenBytes = (vid.bytes != nil && audio.bytes != nil) ? vid.bytes! + audio.bytes! : nil
                 }
             }
             if let id = chosenID {
                 result.append(VideoFormat(id: id, width: key.w, height: key.h, fps: key.fps,
-                                          tbr: chosenTBR, container: chosenMP4 ? "mp4" : "mkv"))
+                                          tbr: chosenTBR, container: chosenMP4 ? "mp4" : "mkv",
+                                          sizeBytes: chosenBytes))
             }
         }
         return (result, audioOnly)

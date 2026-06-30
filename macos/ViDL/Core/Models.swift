@@ -19,6 +19,9 @@ struct VideoFormat: Identifiable, Hashable {
     let fps: Int
     let tbr: Int            // total bitrate, kbps
     var container: String = "mp4"   // output container: "mp4", or "mkv" for VP9/AV1
+    /// Best known output size in bytes (video+audio summed), or nil when yt-dlp reported
+    /// no filesize for a component — the UI then falls back to tbr × duration.
+    var sizeBytes: Double? = nil
 }
 
 struct AudioFormat: Identifiable, Hashable {

@@ -425,8 +425,12 @@ struct DownloadView: View {
     private func formatLabel(_ f: VideoFormat) -> String {
         let p = min(f.width, f.height)   // vertical resolution, even for portrait video
         var s = "\(p)p · \(f.fps) fps"
-        if let d = vm.meta?.duration {
-            let mb = Double(f.tbr) * d / 8192
+        if let bytes = f.sizeBytes {
+            // yt-dlp's exact/approx filesize — base-10 MB to match Finder's display.
+            s += String(format: " · ~%.0f MB", bytes / 1_000_000)
+        } else if let d = vm.meta?.duration {
+            // Fallback: kbps × seconds → base-10 MB (÷8 for bytes, ÷1000 for MB).
+            let mb = Double(f.tbr) * d / 8000
             s += String(format: " · ~%.0f MB", mb)
         }
         if f.container != "mp4" { s += " · \(f.container.uppercased())" }
