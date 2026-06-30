@@ -37,12 +37,17 @@ enum YTDLPService {
         let abr: Double?
         let filesize: Double?          // exact byte size (server Content-Length), when known
         let filesize_approx: Double?   // yt-dlp's estimate, fallback when no exact size
+        let `protocol`: String?        // "https" (DASH/progressive) or "m3u8_native" (HLS)
         let language: String?
         let language_preference: Int?
         let format_note: String?
 
         /// Best available byte size: exact Content-Length first, else yt-dlp's approximation.
         var knownBytes: Double? { filesize ?? filesize_approx }
+
+        /// HLS streams (YouTube's 91–96) are muxed with a wildly inflated `tbr` and never
+        /// carry a filesize. We only fall back to them when no DASH/https format exists.
+        var isHLS: Bool { (`protocol` ?? "").hasPrefix("m3u8") }
     }
 
     private struct RawInfo: Decodable {
@@ -169,6 +174,8 @@ enum YTDLPService {
         // (w, h, fps) -> best (id, tbr, isMP4, bytes). Prefer MP4 over an equal-resolution WebM.
         var muxed: [Key: (id: String, tbr: Int, mp4: Bool, bytes: Double?)] = [:]
         var videoOnly: [Key: (id: String, tbr: Int, mp4: Bool, bytes: Double?)] = [:]
+        // HLS muxed streams, kept apart and only used when a resolution has no https format.
+        var fallbackHLS: [Key: (id: String, tbr: Int, mp4: Bool, bytes: Double?)] = [:]
         func better(_ newTBR: Int, _ newMP4: Bool, than cur: (id: String, tbr: Int, mp4: Bool, bytes: Double?)?) -> Bool {
             guard let cur else { return true }
             if newMP4 != cur.mp4 { return newMP4 }   // MP4 wins at equal resolution
@@ -214,7 +221,10 @@ enum YTDLPService {
                       let w = f.width, let h = f.height else { continue }
                 let fps = Int((f.fps ?? 30).rounded())
                 let key = Key(w: w, h: h, fps: fps)
-                if hasAudio {
+                if f.isHLS {
+                    // Keep HLS aside; its inflated tbr would otherwise beat every DASH format.
+                    if better(tbr, isMP4, than: fallbackHLS[key]) { fallbackHLS[key] = (f.format_id, tbr, isMP4, bytes) }
+                } else if hasAudio {
                     if better(tbr, isMP4, than: muxed[key]) { muxed[key] = (f.format_id, tbr, isMP4, bytes) }
                 } else {
                     if better(tbr, isMP4, than: videoOnly[key]) { videoOnly[key] = (f.format_id, tbr, isMP4, bytes) }
@@ -230,7 +240,7 @@ enum YTDLPService {
             ?? bestAudioAnyAny
 
         var result: [VideoFormat] = []
-        let keys = Set(muxed.keys).union(videoOnly.keys)
+        let keys = Set(muxed.keys).union(videoOnly.keys).union(fallbackHLS.keys)
         for key in keys.sorted(by: { (min($0.w, $0.h), $0.fps) < (min($1.w, $1.h), $1.fps) }) {
             let mux = muxed[key]
             let vid = videoOnly[key]
@@ -248,6 +258,13 @@ enum YTDLPService {
                     // the UI falls back to the bitrate estimate rather than show a half-total.
                     chosenBytes = (vid.bytes != nil && audio.bytes != nil) ? vid.bytes! + audio.bytes! : nil
                 }
+            }
+            // No DASH/https format at this resolution — accept the HLS stream as a last resort.
+            if chosenID == nil, let hls = fallbackHLS[key] {
+                chosenID = hls.id
+                chosenTBR = hls.tbr
+                chosenMP4 = hls.mp4
+                chosenBytes = hls.bytes
             }
             if let id = chosenID {
                 result.append(VideoFormat(id: id, width: key.w, height: key.h, fps: key.fps,
